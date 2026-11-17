@@ -36,6 +36,8 @@ def main() -> int:
     parser.add_argument("--min-lr", type=float, default=2.5e-6)
     parser.add_argument("--warmup", type=int, default=500)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--prefix-cache", type=Path, help="Precomputed native-JAX features with exact source/config provenance")
+    parser.add_argument("--cpu-offload", action="store_true", help="Offload fp32 token parameters/Adam state for a24GB single GPU")
     args = parser.parse_args()
 
     # torchrun exposes every GPU to every child by default.  Orbax restores a
@@ -63,6 +65,7 @@ def main() -> int:
     import torch
     import torch.distributed as dist
     from torch.distributed.fsdp import (
+        CPUOffload,
         FullOptimStateDictConfig,
         FullStateDictConfig,
         FullyShardedDataParallel,
@@ -90,40 +93,52 @@ def main() -> int:
     torch.manual_seed(args.seed + rank)
 
     config = training_config.get_config(args.config_name)
-    data_factory = dataclasses.replace(
-        config.data,
-        repo_id=str(args.dataset_dir.resolve()),
-        assets=dataclasses.replace(
-            config.data.assets,
-            assets_dir=str((args.jax_checkpoint / "assets").resolve()),
-        ),
-    )
-    data_config = data_factory.create(config.assets_dirs, config.model)
-    batches = data_loader.create_torch_data_loader(
-        data_config,
-        config.model,
-        config.model.action_horizon,
-        world_size,
-        shuffle=True,
-        num_batches=args.steps * args.accumulate,
-        num_workers=0,
-        seed=args.seed,
-        framework="pytorch",
-    )
-
-    with jax.default_device(jax_device):
-        params = openpi_model.restore_params(
-            args.jax_checkpoint / "params", dtype=jnp.bfloat16
+    cached = None
+    if args.prefix_cache:
+        cached = torch.load(args.prefix_cache, map_location="cpu", weights_only=True)
+        if (
+            not cached.get("real_native_features")
+            or cached["source_jax_checkpoint"] != str(args.jax_checkpoint.resolve())
+            or cached["config_name"] != args.config_name
+            or tuple(cached["prefix"].shape[1:]) != (768, 2048)
+            or cached["mask"].shape != cached["prefix"].shape[:2]
+        ):
+            raise ValueError("Cached features must match native source, config and768x2048 layout")
+    else:
+        data_factory = dataclasses.replace(
+            config.data,
+            repo_id=str(args.dataset_dir.resolve()),
+            assets=dataclasses.replace(
+                config.data.assets,
+                assets_dir=str((args.jax_checkpoint / "assets").resolve()),
+            ),
         )
-        vla = config.model.load(params)
-        vla.eval()
-
-    @nnx.jit
-    def extract_image_prefix(model, observation):
-        prefix_output, prefix_mask = model.extract_rlt_prefix(observation)
-        # Three 224x224 cameras, 14x14 patches: 3 * 256 image tokens.
-        return prefix_output[:, :768], prefix_mask[:, :768]
-
+        data_config = data_factory.create(config.assets_dirs, config.model)
+        batches = data_loader.create_torch_data_loader(
+            data_config,
+            config.model,
+            config.model.action_horizon,
+            world_size,
+            shuffle=True,
+            num_batches=args.steps * args.accumulate,
+            num_workers=0,
+            seed=args.seed,
+            framework="pytorch",
+        )
+    
+        with jax.default_device(jax_device):
+            params = openpi_model.restore_params(
+                args.jax_checkpoint / "params", dtype=jnp.bfloat16
+            )
+            vla = config.model.load(params)
+            vla.eval()
+    
+        @nnx.jit
+        def extract_image_prefix(model, observation):
+            prefix_output, prefix_mask = model.extract_rlt_prefix(observation)
+            # Three 224x224 cameras, 14x14 patches: 3 * 256 image tokens.
+            return prefix_output[:, :768], prefix_mask[:, :768]
+    
     # Master weights and optimizer state stay in fp32. With bf16 parameters,
     # an AdamW step of ~lr is smaller than half the bf16 spacing for most
     # weights (and all LayerNorm scales at 1.0), so it rounds away entirely.
@@ -142,6 +157,7 @@ def main() -> int:
         sync_module_states=True,
         limit_all_gathers=True,
         use_orig_params=False,
+        cpu_offload=CPUOffload(offload_params=args.cpu_offload),
     )
     optimizer = torch.optim.AdamW(
         rlt.parameters(),
@@ -150,7 +166,7 @@ def main() -> int:
         eps=1e-8,
         weight_decay=1e-10,
     )
-    iterator = iter(batches)
+    iterator = iter(batches) if cached is None else None
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     for step in range(args.steps):
@@ -165,41 +181,45 @@ def main() -> int:
         torch.cuda.empty_cache()
         feature_batches = []
         for _ in range(args.accumulate):
-            observation, _actions = next(iterator)
-            jax_observation = jax.tree.map(
-                lambda value: jax.device_put(
-                    np.asarray(value.detach().cpu()), jax_device
-                ),
-                observation,
-            )
-            # OpenPI's Torch loader represents normalized images as NCHW,
-            # while the native JAX/SigLIP path consumes NHWC.
-            jax_observation = dataclasses.replace(
-                jax_observation,
-                images={
-                    name: (
-                        jnp.transpose(image, (0, 2, 3, 1))
-                        if image.ndim == 4
-                        and image.shape[1] in (1, 3, 4)
-                        and image.shape[-1] not in (1, 3, 4)
-                        else image
-                    )
-                    for name, image in jax_observation.images.items()
-                },
-            )
-            prefix, mask = extract_image_prefix(vla, jax_observation)
-            prefix_torch = (
-                torch.utils.dlpack.from_dlpack(prefix)
-                .to(device="cpu", dtype=torch.bfloat16)
-                .clone()
-            )
-            mask_torch = (
-                torch.utils.dlpack.from_dlpack(mask)
-                .to(device="cpu", dtype=torch.bool)
-                .clone()
-            )
-            feature_batches.append((prefix_torch, mask_torch))
-            del prefix, mask, prefix_torch, mask_torch, jax_observation
+            if cached is not None:
+                index = (step * args.accumulate + _) % len(cached["prefix"])
+                feature_batches.append((cached["prefix"][index:index+1], cached["mask"][index:index+1]))
+            else:
+                observation, _actions = next(iterator)
+                jax_observation = jax.tree.map(
+                    lambda value: jax.device_put(
+                        np.asarray(value.detach().cpu()), jax_device
+                    ),
+                    observation,
+                )
+                # OpenPI's Torch loader represents normalized images as NCHW,
+                # while the native JAX/SigLIP path consumes NHWC.
+                jax_observation = dataclasses.replace(
+                    jax_observation,
+                    images={
+                        name: (
+                            jnp.transpose(image, (0, 2, 3, 1))
+                            if image.ndim == 4
+                            and image.shape[1] in (1, 3, 4)
+                            and image.shape[-1] not in (1, 3, 4)
+                            else image
+                        )
+                        for name, image in jax_observation.images.items()
+                    },
+                )
+                prefix, mask = extract_image_prefix(vla, jax_observation)
+                prefix_torch = (
+                    torch.utils.dlpack.from_dlpack(prefix)
+                    .to(device="cpu", dtype=torch.bfloat16)
+                    .clone()
+                )
+                mask_torch = (
+                    torch.utils.dlpack.from_dlpack(mask)
+                    .to(device="cpu", dtype=torch.bool)
+                    .clone()
+                )
+                feature_batches.append((prefix_torch, mask_torch))
+                del prefix, mask, prefix_torch, mask_torch, jax_observation
 
         for prefix_cpu, mask_cpu in feature_batches:
             prefix_torch = prefix_cpu.to(torch_device)
@@ -267,6 +287,8 @@ def main() -> int:
                         "image_only": True,
                         "prefix_seq_len": 768,
                         "sharding_strategy": "FULL_SHARD",
+                        "cpu_offload": args.cpu_offload,
+                        "prefix_cache": str(args.prefix_cache) if args.prefix_cache else None,
                     },
                     checkpoint_dir / "rlt_token.pt",
                 )

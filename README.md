@@ -171,16 +171,24 @@ bash rlt/run.sh stage2-base runner.resume_dir=/absolute/path/to/checkpoints/glob
 
 使用同一个token指纹、动作归一化和特征维度。人工接管按实际executed action记录；当前配置保留JAX reference用于人工BC目标，并在接管边界按配置终结机器片段。见[RLT说明](rlt/README.md)。
 
-## 7. 检查与验证范围
+## 7. 已完成真实模型离线闭环验证
+
+2026-11-17在4090上实际执行：448帧真实录像回放/转换，原生JAX π0.5专家LoRA训练2步；RECAP Value2步、448条标签、CFG2步及重载推理；完整7.46亿参数RLT Token2步、35条实际动作replay、actor/critic学习及重载推理。全部最终输出有限，未启动机器人。
+
+完整复现命令、结果、修复与边界见 [OFFLINE_VALIDATION.md](docs/OFFLINE_VALIDATION.md)。统一入口：
 
 ```bash
 source common/env.sh
+"$PIPER_PYTHON" scripts/offline/run.py \
+  --demo "$PIPER_DEMO_DATASET" --rollout /path/to/lerobot_v5 \
+  --checkpoint "$PIPER_JAX_CHECKPOINT" \
+  --siglip /path/to/siglip2-so400m-patch14-224 --gemma /path/to/gemma-3-270m \
+  --output "$PWD/runs/offline_new"
+# 相同参数加 --resume 可继续已完成的阶段。
 bash scripts/check.sh
-bash recap/run.sh cfg --dry-run
-bash rlt/run.sh stage2-base --cfg job --resolve
 ```
 
-已从固定Git对象离线重建上游并应用全部源码修改；已进行接管状态机、CAN发送屏障、原生HOLD旧动作丢弃、实际数据转换、RECAP标签、RLT replay/人工纠正/RTC和配置检查。具体数量与限制记录在[验证报告](docs/VALIDATION.md)。本次整理没有重新启动真机或完成一次全量GPU训练，新环境安装仍须在目标机器执行。
+拉取更新后，已有生成依赖可使用 `python3.11 scripts/bootstrap.py --refresh` 重建，旧目录保留为.previous_备份。正常训练仍使用上文各路线入口，离线小步配置不替代完整训练配置。
 
 ## 来源与许可
 

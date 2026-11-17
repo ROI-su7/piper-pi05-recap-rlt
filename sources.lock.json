@@ -100,7 +100,7 @@
       "dependency": "rlinf",
       "file": "examples/recap_piper/env.sh",
       "source": "recap/source/rlinf/examples/recap_piper/env.sh",
-      "sha256": "d63a85e284691b044c749629bf8ef01bc98514b2d84cfe5896b3907d3ca34bfc"
+      "sha256": "16bb12a77928f1531d9902292ee44a086e623bffc94fe52bebebfb9abad3d6a5"
     },
     {
       "kind": "overlay",
@@ -510,7 +510,7 @@
       "dependency": "rlinf",
       "file": "toolkits/realworld_check/train_piper_rlt_token_native_jax.py",
       "source": "rlt/source/rlinf/toolkits/realworld_check/train_piper_rlt_token_native_jax.py",
-      "sha256": "84ba5186826ee7bf5a15b3691cabe63cce4aaf20ecf114fe511d59887f4c3568"
+      "sha256": "5aafe8aeb94d0a9fa14d7dd66524da5700fed7babe51517f2c2c39a2453cac76"
     },
     {
       "kind": "overlay",
@@ -902,6 +902,12 @@
       "source": "rlt/source/rlinf/tests/unit_tests/test_piper_leader_takeover.py",
       "file": "tests/unit_tests/test_piper_leader_takeover.py",
       "sha256": "751a15a3a931b1f1862d2093b5f48364c2cc06719cc0bc88bb79214e5275b522"
+    },
+    {
+      "kind": "patch",
+      "dependency": "rlinf",
+      "source": "recap/patches/offline_batch_contracts.patch",
+      "sha256": "042d2a372955881387fbc1b43a27c083e54aa1d928cd93d38f26e443f730f413"
     }
   ]
 }

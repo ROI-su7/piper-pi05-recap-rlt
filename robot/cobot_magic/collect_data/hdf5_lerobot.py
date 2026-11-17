@@ -273,7 +273,7 @@ def create_empty_dataset(
 
     for camera in cameras:
         features[f"observation.images.{camera}"] = {
-            "dtype": "video",
+            "dtype": "video" if dataset_config.use_videos else "image",
             "shape": (3, 480, 640),
             "names": ["channels", "height", "width"],
         }

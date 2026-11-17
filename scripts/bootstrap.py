@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,16 +20,25 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def materialize(name, lock, local=None):
+def materialize(name, lock, local=None, *, refresh=False):
     target = ROOT / "deps" / name
     signature = hashlib.sha256(json.dumps(lock, sort_keys=True).encode()).hexdigest()
     marker = target / ".piper-source.json"
     if target.exists():
         if marker.is_file() and json.loads(marker.read_text())["signature"] == signature:
             return target
-        raise FileExistsError(
-            f"{target} already exists with different/uncommitted provenance; use a fresh destination"
-        )
+        if not refresh or not marker.is_file():
+            raise FileExistsError(
+                f"{target} has different provenance; use --refresh only for recognized generated dependencies"
+            )
+        backup = target.with_name(target.name + ".previous_" + uuid.uuid4().hex[:8])
+        target.rename(backup)
+        try:
+            return materialize(name, lock, local)
+        except BaseException:
+            if not target.exists():
+                backup.rename(target)
+            raise
     target.parent.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{name}-", dir=target.parent) as folder:
         folder = Path(folder)
@@ -79,6 +89,11 @@ def main():
         "--local-rlinf", help="Read-only local git object source for offline reconstruction"
     )
     p.add_argument("--verify-only", action="store_true")
+    p.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Keep a backup and rebuild recognized stale generated dependencies",
+    )
     args = p.parse_args()
     lock = json.loads((ROOT / "sources.lock.json").read_text())
     for operation in lock["operations"]:
@@ -88,7 +103,7 @@ def main():
         print(f"Verified {len(lock['operations'])} pinned Piper changes")
         return
     for name, local in [("openpi", args.local_openpi), ("rlinf", args.local_rlinf)]:
-        print(materialize(name, lock, local))
+        print(materialize(name, lock, local, refresh=args.refresh))
 
 
 if __name__ == "__main__":

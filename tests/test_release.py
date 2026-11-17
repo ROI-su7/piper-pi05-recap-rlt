@@ -51,3 +51,51 @@ def test_python_shell_and_ros_sources_parse():
                 subprocess.run(["bash", "-n", str(path)], check=True, capture_output=True)
             elif path.suffix in {".xml", ".launch"}:
                 ET.parse(path)
+
+
+def test_refresh_keeps_old_generated_tree(tmp_path, monkeypatch):
+    import importlib.util
+    import io
+    import tarfile
+
+    spec = importlib.util.spec_from_file_location(
+        "release_bootstrap", ROOT / "scripts/bootstrap.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    target = tmp_path / "deps/openpi"
+    target.mkdir(parents=True)
+    (target / ".piper-source.json").write_text('{"signature":"previous"}')
+    (target / "old.txt").write_text("preserve me")
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w") as archive:
+        item = tarfile.TarInfo("new.txt")
+        item.size = 3
+        archive.addfile(item, io.BytesIO(b"new"))
+    monkeypatch.setattr(module.subprocess, "check_output", lambda *a, **k: payload.getvalue())
+    monkeypatch.setattr(module.subprocess, "run", lambda *a, **k: None)
+    lock = {"dependencies": {"openpi": {"revision": "new", "url": "unused"}}, "operations": []}
+    module.materialize("openpi", lock, local=tmp_path, refresh=True)
+    assert (target / "new.txt").read_text() == "new"
+    backup = next((tmp_path / "deps").glob("openpi.previous_*"))
+    assert (backup / "old.txt").read_text() == "preserve me"
+
+
+def test_refresh_refuses_unrecognized_tree(tmp_path, monkeypatch):
+    import importlib.util
+
+    import pytest
+
+    spec = importlib.util.spec_from_file_location(
+        "release_bootstrap_unknown", ROOT / "scripts/bootstrap.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    target = tmp_path / "deps/openpi"
+    target.mkdir(parents=True)
+    (target / "user.txt").write_text("untouched")
+    with pytest.raises(FileExistsError):
+        module.materialize("openpi", {"dependencies": {}, "operations": []}, refresh=True)
+    assert (target / "user.txt").read_text() == "untouched"

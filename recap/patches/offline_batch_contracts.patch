@@ -1,0 +1,61 @@
+--- a/examples/offline_rl/advantage_labeling/recap/process/compute_advantages.py
++++ b/examples/offline_rl/advantage_labeling/recap/process/compute_advantages.py
+@@ -468,6 +468,11 @@
+ 
+ 
+ @torch.no_grad()
++def resolve_dataset_robot_type(data_cfg, dataset_cfg) -> str:
++    """Inherit the shared robot schema for demonstrations and rollout alike."""
++    return dataset_cfg.get("robot_type", data_cfg.get("robot_type", "libero"))
++
++
+ def compute_advantages_for_dataset(
+     value_model,
+     dataset: LeRobotDataset,
+@@ -501,7 +506,7 @@
+     """
+     gamma = cfg.data.gamma
+     action_horizon = cfg.data.advantage_lookahead_step
+-    robot_type = dataset_cfg.get("robot_type", "libero")
++    robot_type = resolve_dataset_robot_type(cfg.data, dataset_cfg)
+     discount_next_value = cfg.advantage.get("discount_next_value", True)
+     batch_size = cfg.advantage.get("batch_size", 64)
+ 
+--- a/rlinf/workers/sft/fsdp_value_sft_worker.py
++++ b/rlinf/workers/sft/fsdp_value_sft_worker.py
+@@ -499,7 +499,7 @@
+                         result.predicted_values.detach().mean().item()
+                     )
+                     metrics["predicted_value_std"] = (
+-                        result.predicted_values.detach().std().item()
++                        result.predicted_values.detach().std(unbiased=False).item()
+                     )
+                 if result.cat_acc_best is not None:
+                     metrics["cat_acc_best"] = (
+@@ -534,7 +534,7 @@
+                 metrics["loss"] = loss.detach().item()
+                 if target_values is not None:
+                     metrics["target_value_mean"] = target_values.detach().mean().item()
+-                    metrics["target_value_std"] = target_values.detach().std().item()
++                    metrics["target_value_std"] = target_values.detach().std(unbiased=False).item()
+                 all_metrics.append(metrics)
+ 
+             grad_norm, lr_list = self.optimizer_step()
+@@ -599,7 +599,7 @@
+                                 result.predicted_values.detach().mean().item()
+                             )
+                             metrics["predicted_value_std"] = (
+-                                result.predicted_values.detach().std().item()
++                                result.predicted_values.detach().std(unbiased=False).item()
+                             )
+                         if result.cat_acc_best is not None:
+                             metrics["cat_acc_best"] = (
+@@ -645,7 +645,7 @@
+                                 target_values.detach().mean().item()
+                             )
+                             metrics["target_value_std"] = (
+-                                target_values.detach().std().item()
++                                target_values.detach().std(unbiased=False).item()
+                             )
+                         batch_metrics.append(metrics)
+ 

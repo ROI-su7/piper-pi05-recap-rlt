@@ -1,0 +1,94 @@
+{
+  "date": "2026-11-17",
+  "gpu": "RTX4090 24GB",
+  "host_ram": "32GB",
+  "complete": true,
+  "recording": "Real recorded three-camera clips replayed offline; no new robot interaction",
+  "frames": 448,
+  "clips": 7,
+  "labels": {
+    "total": 448,
+    "positive": 256,
+    "negative": 192,
+    "human_frames": 37,
+    "human_positive": 37
+  },
+  "steps": {
+    "native_sft": 2,
+    "value": 2,
+    "recap_cfg": 2,
+    "rlt_token": 2
+  },
+  "rlt": {
+    "token_parameters": 745715712,
+    "token_losses": [
+      3.4659292697906494,
+      3.1892268657684326
+    ],
+    "token_steps": 2,
+    "transitions": 35,
+    "valid_recorded_actions": 315,
+    "human_recorded_actions": 36,
+    "encoder_fingerprint": "1db6126a8156f3d7",
+    "actor_updates": 1.0,
+    "critic_updates": 2.0
+  },
+  "inference": {
+    "native_infer": {
+      "stage": "native_sft_reload",
+      "shape": [
+        50,
+        14
+      ],
+      "finite": true,
+      "seconds": 14.653101722000429,
+      "real_model": true
+    },
+    "recap_infer": {
+      "strict_reload": true,
+      "shape": [
+        50,
+        14
+      ],
+      "finite": true,
+      "plain_seconds": 0.9500271319993772,
+      "cfg_seconds": 0.42325908199927653,
+      "cfg_scale": 1.5,
+      "paired_noise_seed": 123,
+      "mean_difference": 0.0003652261511888355
+    },
+    "rlt_infer": {
+      "strict_reload": true,
+      "shape": [
+        1,
+        10,
+        14
+      ],
+      "finite": true,
+      "actor_optimizer_step": 1.0,
+      "critic_optimizer_step": 2.0,
+      "optimizer_state_finite": true,
+      "z_dim": 2048,
+      "parameters": 2364494
+    }
+  },
+  "losses": {
+    "value": [
+      5.681915283203125,
+      5.5255126953125
+    ],
+    "cfg": [
+      0.14070548117160797,
+      5.516499004443176e-05
+    ]
+  },
+  "regression": {
+    "passed": 205,
+    "subtests_passed": 4
+  },
+  "limits": [
+    "Small-step optimization verifies execution, not convergence or task gains.",
+    "Offline replay uses explicit zero bridge_delta; live RTC/HOLD contracts have separate regression coverage.",
+    "RLT actor updated once and critic twice, according to the configured update ratio."
+  ]
+}

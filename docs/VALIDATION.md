@@ -1,18 +1,15 @@
 # 验证记录
 
-日期2026-11-17。本次整理保留既有执行链，没有启动ROS节点、相机、CAN或机械臂。
+2026-11-17：完成真实录像→正式数据转换→原生JAX π0.5专家LoRA训练→检查点推理，以及RECAP、RLT两条真实模型离线学习链。
 
-## 已完成
+7个64帧真实片段，共448帧，含37人工接管观察。原始数据与原模型保持只读，所有新产物写入独立验证目录。本次没有新启动机器人、相机或CAN。
 
-- 从本机只读Git对象恢复OpenPI、RLinf固定commit，再应用全部已发布补丁/源码。上游RLinf commit已通过GitHub API确认存在。
-- 200项CPU检查通过，另有4个subtest通过，无跳过。包括原Piper四CAN profile、leader角色握手、CAN TX guard、HOLD/HOME边界、原生客户端在途结果丢弃与ACK排空，以及RECAP导出/returns和RLT人工纠正、replay、RTC。
-- RECAP CFG和RLT基础版Stage2配置均可由便携入口展开；RECAP配置包含示教副本与自主/人工纠正rollout两份数据。
-- SHA256校验覆盖128个已发布的Piper补丁/源码操作；依赖和算法分开维护。硬件源码的license原样保留。
+| 路线 | 实际验证 |
+|---|---|
+| 共享 | RGB/状态/动作回放往返，原生JAX SFT2步、保存和重载推理 |
+| RECAP | 新SFT权重转换，回报分布Value2步，448优势标签，CFG2步、严格重载普通/CFG1.5推理 |
+| RLT | 同一SFT的原生特征，完整745,715,712参数Token训练2步，35真实动作replay，actor/critic2轮及严格重载推理 |
 
-## 未在本次重新执行
+所有最终动作与RLT optimizer状态有限；actor更新1次、critic更新2次，不只是生成空检查点。Tensor/数据/模型来源及完整命令见[离线验证说明](OFFLINE_VALIDATION.md)。
 
-- 新机器完整依赖安装、GPU全量SFT/Value/CFG/Token/actor训练。
-- 本次发布仓库的新真机接管、运动和任务成功率验收。
-- 外部权重与实际数据的下载。它们由使用者配置，未上传GitHub。
-
-scripts/check.sh可复现上述CPU检查；模型环境需bootstrap后准备好。模型/学习阶段入口指向当前源码实现，配置展开不会启动训练或硬件。
+源码补丁与上游版本可从只读Git对象完整重建。205项CPU回归和4个子测试通过，覆盖实际控制状态机、CAN发送排空、原生HOLD旧结果丢弃、数据转换/标签、人工纠正、RTC与replay等；检查入口为scripts/check.sh。小步运行验证软件闭环，不代表完整数据训练收敛或新真机任务表现。
