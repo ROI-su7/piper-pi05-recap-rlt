@@ -1,0 +1,907 @@
+{
+  "schema_version": 1,
+  "dependencies": {
+    "openpi": {
+      "url": "https://github.com/Physical-Intelligence/openpi.git",
+      "revision": "15a9616a00943ada6c20a0f158e3adb39df2ccac"
+    },
+    "rlinf": {
+      "url": "https://github.com/RLinf/RLinf.git",
+      "revision": "c5ca51cc21c007a41d287159f9e1b14e0200000e"
+    }
+  },
+  "operations": [
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/scoring.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/scoring.py",
+      "sha256": "33e93681141062dba27a0d18d5c60f7ba55465e26837a02a11ff9af1236b6b0e"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/source.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/source.py",
+      "sha256": "e2ab777d7a106b0b799357cce2db4ddd7f250f0307267e196ea0608a9cfc0d12"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/policy.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/policy.py",
+      "sha256": "a1acdb2262b9b16927eefa952d4535dec575b3d0d2fa395902f3abfc9e63d788"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/client.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/client.py",
+      "sha256": "cdf3d2a97139d92a23955d02a0c2c27b476c2c215377c9a31718f1c4f0435e88"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/data.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/data.py",
+      "sha256": "53a24a40fa7f7b0df10e3a041d01decfbea29dc07f8e290a1017fd161c784d41"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/preflight.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/preflight.py",
+      "sha256": "3da6228d4cbbb4ff47bae04fb5f81324ad8f1871a750de04757b8615fbaa4d28"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/cli.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/cli.py",
+      "sha256": "11d23e8deca904f0b2f2f4d4792cd71f5907f18dfd00b2d1ff55c6b912939cb3"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/mux_guard.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/mux_guard.py",
+      "sha256": "8935573c1d941976f86e9a5e67bdac693329792f4b43737e07adfd9a37b3feb6"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/collect.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/collect.py",
+      "sha256": "205e491a6b2d3b959bd2ec8af767ba90ebbb4e0217e40f68c65a97deef981f38"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/recap_piper/__init__.py",
+      "source": "recap/source/rlinf/rlinf/recap_piper/__init__.py",
+      "sha256": "1410d3e4e5eacc94c53827aedb5cb70dac7169b9f408692fdc178c89b2827e8f"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/recap_piper/run.sh",
+      "source": "recap/source/rlinf/examples/recap_piper/run.sh",
+      "sha256": "41fbee90b763fb0af0e93317fd405ef62eba321c64abfcaab2ce7926a474b71c"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/recap_piper/run_native_server.sh",
+      "source": "recap/source/rlinf/examples/recap_piper/run_native_server.sh",
+      "sha256": "effc1a798e3e2778f0e29bcf6a404205f384a0cda57e688f308cb50c9cd79bcc"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/recap_piper/env.sh",
+      "source": "recap/source/rlinf/examples/recap_piper/env.sh",
+      "sha256": "d63a85e284691b044c749629bf8ef01bc98514b2d84cfe5896b3907d3ca34bfc"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/recap_piper/run_client.sh",
+      "source": "recap/source/rlinf/examples/recap_piper/run_client.sh",
+      "sha256": "701233e94f7280e523f17f5a126bf4eb7ef8699b7115bb0ff38a8e3d54eaafd4"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/mode2_ros.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/mode2_ros.py",
+      "sha256": "1ca5c6924f37f265f2995c082062b471e1ebf66d9abf002e9925c515f0183477"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/mux_rlt_wrapper.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/mux_rlt_wrapper.py",
+      "sha256": "7d02ac2a4da1515b92e58afae67ab0f9c54043d4526c91f5ab69a755321c4697"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/follower_rlt_wrapper.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/follower_rlt_wrapper.py",
+      "sha256": "7e30ef7757e4cc86cb723498c4ea9062a924f0852a976e72b43f341c152d8966"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/four_can_mux.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/four_can_mux.py",
+      "sha256": "2f3ddc3a66af6fc2a1176705e2457126b52dc49ab80936f76c5aff2924b615d3"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/actor_command_profile.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/actor_command_profile.py",
+      "sha256": "c960ff4b518a7587593f6b3be2eaaed8490c45ee411ba1071ff08a273cb2c29f"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/wire_head_pose.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/wire_head_pose.py",
+      "sha256": "0bed9c52283aa7c8b6031b15e723b81e4ae6fa99ee749addae2893e1b4001c9c"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/mode2_controller.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/mode2_controller.py",
+      "sha256": "0cb166e9ec0781a5d21f7617940c6f6f483152ab5aa6d2d15f38f2f53edb5173"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/leader_takeover.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/leader_takeover.py",
+      "sha256": "0f23e376de089fb0105f6fe56a1a035e8647d6739b823400ca8af5219e115021"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/piper_env.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/piper_env.py",
+      "sha256": "451a249577d47ccc6b47ef82de847ed39453e9e4e507b3c1e89a46b79bec97fd"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/action_trace.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/action_trace.py",
+      "sha256": "c312a22ced558c4f04ec7d8f00da2e6b8c8d1abdbbfac7382528b557e403c7d5"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/__init__.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/__init__.py",
+      "sha256": "631cbe1a50e80b612a49acf360c8f0306dadce5b86c223b7b76183ee2d3bdbdb"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/correction_diagnostics.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/correction_diagnostics.py",
+      "sha256": "5f9fe5d31c597297949d9277dd3f917e294fe540ed5d23c29f5f37132255bd19"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/control_process.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/control_process.py",
+      "sha256": "13d39556fab135d9baa19640d94d20f5199ad155d77ba4eaa89ce10cb8d4c59d"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/envs/realworld/piper/tasks/__init__.py",
+      "source": "rlt/source/rlinf/rlinf/envs/realworld/piper/tasks/__init__.py",
+      "sha256": "f430da9e1fc17376045f3b1ff88d4a8a115e0d6d0536eeac5d14cd39526dbba0"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/native_jax_rlt/compact_server.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/native_jax_rlt/compact_server.py",
+      "sha256": "2e6ed48dd82fc40c3a7907ebddff7fbe717eacb67cda9cc6a5e5044643102ca4"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/native_jax_rlt/__init__.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/native_jax_rlt/__init__.py",
+      "sha256": "086d9754c537db41dd8c28183b172a4b83cccfc20817ea7390a92e5fcb549340"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/algorithms/rlt/head_pose_shaping.py",
+      "source": "rlt/source/rlinf/rlinf/algorithms/rlt/head_pose_shaping.py",
+      "sha256": "17fe822eb6aedc2d4e10c451183b676e8ce2cbc80f95906149c08977ae6da5d8"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/algorithms/rlt/transition.py",
+      "source": "rlt/source/rlinf/rlinf/algorithms/rlt/transition.py",
+      "sha256": "62f92483ea4c379bd6e78db2e130b92b5fe1e84a84ac2a12376eba63b70a7c68"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/algorithms/rlt/expert.py",
+      "source": "rlt/source/rlinf/rlinf/algorithms/rlt/expert.py",
+      "sha256": "28a001b2a2c76ab9d344167c355f5fc1bf1e93e4d5bd35b54ee4e80fdd8b14ee"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/algorithms/rlt/subsample.py",
+      "source": "rlt/source/rlinf/rlinf/algorithms/rlt/subsample.py",
+      "sha256": "55cd808ec3f8f5cc8cd11a6b7677a38ec769e9b86ebb80d3fa8e3cdad7ff2853"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/algorithms/rlt/rollout.py",
+      "source": "rlt/source/rlinf/rlinf/algorithms/rlt/rollout.py",
+      "sha256": "f10d2f74bcc65e0d31393312165d57aa296b10de3268c993893032c196fe7688"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/algorithms/rlt/route.py",
+      "source": "rlt/source/rlinf/rlinf/algorithms/rlt/route.py",
+      "sha256": "e75932317a745102e42b548a1e9ecbce8ffd45c34604907d8e02ce361fe3ec73"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/algorithms/rlt/__init__.py",
+      "source": "rlt/source/rlinf/rlinf/algorithms/rlt/__init__.py",
+      "sha256": "dafcc03783b5834fa7adff5540fe90b76270a7a25e2e99c532a19cb59d3b43bf"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/wire_head_pose/extract_contact_frames.py",
+      "source": "rlt/source/rlinf/toolkits/wire_head_pose/extract_contact_frames.py",
+      "sha256": "c81c2fc1c331d1ee3644d77060392e33f24326cc0e520e0d49c4a3870ef10a4f"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/wire_head_pose/annotate.py",
+      "source": "rlt/source/rlinf/toolkits/wire_head_pose/annotate.py",
+      "sha256": "ed476692ec833aeee3f0bff8fa02e5604af84f98b02da20dc4751dd68e938ed9"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/wire_head_pose/backfill_replay_head_pose.py",
+      "source": "rlt/source/rlinf/toolkits/wire_head_pose/backfill_replay_head_pose.py",
+      "sha256": "86ca86aa35b32658e47cf4182c9755d35e027b72225dc6a600664593135e39bf"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/wire_head_pose/pad_stage2_checkpoint.py",
+      "source": "rlt/source/rlinf/toolkits/wire_head_pose/pad_stage2_checkpoint.py",
+      "sha256": "da2d443ecd7a483bbdb3d1fd26fba84c3fd0a769e3a8a18da4bc13bc51f83699"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/wire_head_pose/acceptance_replay.py",
+      "source": "rlt/source/rlinf/toolkits/wire_head_pose/acceptance_replay.py",
+      "sha256": "73e35ac9eb8ae8b4f55bf66ba76164f7f23f6982c99c803dfc8bfdea40730789"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/wire_head_pose/piper_fk.py",
+      "source": "rlt/source/rlinf/toolkits/wire_head_pose/piper_fk.py",
+      "sha256": "ad1c49511ed1569e806b419df29f9cc249c92e31a3188ef70ebe6d144fa74b32"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/wire_head_pose/acceptance_demo.py",
+      "source": "rlt/source/rlinf/toolkits/wire_head_pose/acceptance_demo.py",
+      "sha256": "1a7b0fd8c5a0614576b41b9c4e13e0610fca857fc65e9385ccef7970ccae8870"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/wire_head_pose/__init__.py",
+      "source": "rlt/source/rlinf/toolkits/wire_head_pose/__init__.py",
+      "sha256": "f766abaa587831437616524555dfadd7ac48aee6338a4514493ea69ad3ce7488"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/wire_head_pose/keypoint_model.py",
+      "source": "rlt/source/rlinf/toolkits/wire_head_pose/keypoint_model.py",
+      "sha256": "0557176df8670394b00c1aea94dfec807cae5cd4959510089cdcd81f763cb464"
+    },
+    {
+      "kind": "patch",
+      "dependency": "rlinf",
+      "source": "common/patches/rlinf.patch",
+      "sha256": "e3d1d7dd47f8ece7b804d9b5a9f9fac5f204dc53781884bf2c1e9df8310fc099"
+    },
+    {
+      "kind": "patch",
+      "dependency": "rlinf",
+      "source": "recap/patches/rlinf.patch",
+      "sha256": "c3cb9f62defba194ade794e5ae4756a0b4a879001031d5efa721639d9f8edb31"
+    },
+    {
+      "kind": "patch",
+      "dependency": "rlinf",
+      "source": "rlt/patches/rlinf.patch",
+      "sha256": "30957688d4a7ff3c64b1c3c82eaa6e22e1af4e293851856f3c15169e33e59295"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/config/realworld_piper_rlt_stage2_zero_correction.yaml",
+      "source": "rlt/configs/realworld_piper_rlt_stage2_zero_correction.yaml",
+      "sha256": "8c97854ae1f36e4ba236921307431a89726843286bec72495fa98ec58688ec17"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/config/realworld_piper_rlt_stage2_followers.yaml",
+      "source": "rlt/configs/realworld_piper_rlt_stage2_followers.yaml",
+      "sha256": "3c9a82311f94e3257135ebcefd20063213996b72aa95bf17f84ec7d8fbfdbcb5"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/config/realworld_piper_rlt_stage2_ac_mlp_dual_warmup500.yaml",
+      "source": "rlt/configs/realworld_piper_rlt_stage2_ac_mlp_dual_warmup500.yaml",
+      "sha256": "5b308f7a8d95e1eb6533245547feb40d5961b1de1a56de5b9d5968b39516d5ab"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/config/realworld_piper_rlt_stage2_ac_mlp_mode2.yaml",
+      "source": "rlt/configs/realworld_piper_rlt_stage2_ac_mlp_mode2.yaml",
+      "sha256": "4b436438994bd02d44dbdb9abeb73de78df1753d8c44096c4ba3480fde37d399"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/config/realworld_piper_rlt_stage2_ac_mlp_dual.yaml",
+      "source": "rlt/configs/realworld_piper_rlt_stage2_ac_mlp_dual.yaml",
+      "sha256": "b25299f3982395d937f31efcc87299b67fb36a395be3ce4fce3822c58a61e68a"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/config/realworld_piper_rlt_stage2_ac_mlp.yaml",
+      "source": "rlt/configs/realworld_piper_rlt_stage2_ac_mlp.yaml",
+      "sha256": "729a58cc4aa404ade87188130edf517ad03bf86446b1a60c3d1af3c393187049"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/config/realworld_piper_rlt_stage2_zero_correction_rtc.yaml",
+      "source": "rlt/configs/realworld_piper_rlt_stage2_zero_correction_rtc.yaml",
+      "sha256": "ec1d3b8cfd5144d74e349989f4d090b58a2729de4f18b6406385aa7bd3db4bf0"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/config/realworld_piper_rlt_stage2_ac_mlp_dual_mode2.yaml",
+      "source": "rlt/configs/realworld_piper_rlt_stage2_ac_mlp_dual_mode2.yaml",
+      "sha256": "3ba5f0b8a1df3420a3ce1631754af3e5ad84cb2cd6cd5da9b0cf4b5bb308c43a"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/config/env/realworld_piper_wire.yaml",
+      "source": "rlt/configs/env/realworld_piper_wire.yaml",
+      "sha256": "9b9d9ddfae66def05b7ac44a9fc38c56deb2fcebf6e888e8f50f26ed8f783a29"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/sft/config/realworld_piper_rlt_stage1_sft_openpi_pi05.yaml",
+      "source": "rlt/source/rlinf/examples/sft/config/realworld_piper_rlt_stage1_sft_openpi_pi05.yaml",
+      "sha256": "4fa7d10427e707fc3d01b82faaddab835c2b0904c46d2d8081202f8c202854f1"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/mlp_policy/rlt_mlp_policy.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/mlp_policy/rlt_mlp_policy.py",
+      "sha256": "51f59ee0e32a8b2788de443e0557bcfe3265ce25d38a89e96fb66f7eda382c3f"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/mlp_policy/rlt_action_space.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/mlp_policy/rlt_action_space.py",
+      "sha256": "8d7c3e86416776a94a032ffdb04cbab545ad567976406689562af989abe97e12"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/modules/rlt_token_checkpoint.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/modules/rlt_token_checkpoint.py",
+      "sha256": "651636657210e34270b14b74891f9f7ce7902cb02ff28cdc981205703b8fc9ce"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/modules/rlt_token_transformer.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/modules/rlt_token_transformer.py",
+      "sha256": "d72364f58436af345164d9bb574d7f7edf054e5c9d1e94d367ae075b53779332"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/modules/rlt_projected_heads.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/modules/rlt_projected_heads.py",
+      "sha256": "828cf65048bec66c66743903b69e83e917c356f922dcfaa8b25ee09dc44a7443"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/data/rlt_image_log.py",
+      "source": "rlt/source/rlinf/rlinf/data/rlt_image_log.py",
+      "sha256": "963828d4f135f25883ce996b01f334b8a756307fbea718cacd25bc46b17ae2a6"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/runners/rlt_replay_only_runner.py",
+      "source": "rlt/source/rlinf/rlinf/runners/rlt_replay_only_runner.py",
+      "sha256": "fbf119012686620bd26699405cb6b03c4ed2c08ef574e234fd13c1c44900807c"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/openpi/policies/piper_joint_policy.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/openpi/policies/piper_joint_policy.py",
+      "sha256": "db9477f229ccbf7b397d18d695c60f82d3c14a9c8b1d23e7c85ce93a4272aea0"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/openpi/dataconfig/piper_dataconfig.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/openpi/dataconfig/piper_dataconfig.py",
+      "sha256": "3c81ccb57f1e26cf9edd1931c04d9578a64161922c4bde3dc8263d97b0e140b5"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/openpi/native_lora.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/openpi/native_lora.py",
+      "sha256": "bdfa04610e7c802bc553984da0f47df8cca48dcd92d3932eaa1bbeb57132da65"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "rlinf/models/embodiment/openpi/roi_config.py",
+      "source": "rlt/source/rlinf/rlinf/models/embodiment/openpi/roi_config.py",
+      "sha256": "bf5468abb437c053b4bcf54ae8ff484dae08c5a0a485ae5df70c9597ef5bc581"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/realworld_check/eval_piper_rlt_token_checkpoints.py",
+      "source": "rlt/source/rlinf/toolkits/realworld_check/eval_piper_rlt_token_checkpoints.py",
+      "sha256": "02a8446147ac1d0606b9c582cb565aa80bfb9f05968330771cecf16df20c7a13"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/realworld_check/train_piper_rlt_token_native_jax.py",
+      "source": "rlt/source/rlinf/toolkits/realworld_check/train_piper_rlt_token_native_jax.py",
+      "sha256": "84ba5186826ee7bf5a15b3691cabe63cce4aaf20ecf114fe511d59887f4c3568"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/realworld_check/serve_piper_rlt_compact.py",
+      "source": "rlt/source/rlinf/toolkits/realworld_check/serve_piper_rlt_compact.py",
+      "sha256": "bb71e679664eb73a4ca8dab26f782cd731daadc662909e5136ce6937c51644e3"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/realworld_check/compute_piper_rlt_delta_action_stats.py",
+      "source": "rlt/source/rlinf/toolkits/realworld_check/compute_piper_rlt_delta_action_stats.py",
+      "sha256": "a2d6b55d45ca5639c901c97a53c2b75248b922251d760eb0ca7e354919565670"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/realworld_check/preflight_piper_rlt_stage2.py",
+      "source": "rlt/source/rlinf/toolkits/realworld_check/preflight_piper_rlt_stage2.py",
+      "sha256": "87a6874fd8c1d4e733b9d78b36b4d33db37d37e1d60805caf4dcf4339071d8f5"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/realworld_check/rlt_episode_stats.py",
+      "source": "rlt/source/rlinf/toolkits/realworld_check/rlt_episode_stats.py",
+      "sha256": "87e87f1534fb822bf263fdf9b09c3441f31fca9c21ea8f8a4d467b75af01f5a3"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "toolkits/merge_rlt_replay_buffers.py",
+      "source": "rlt/source/rlinf/toolkits/merge_rlt_replay_buffers.py",
+      "sha256": "9f8aeb6a7ae3d205a1b991adc065784bd6c7f9fb04848099095ab33dd3974ede"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/embodiment/train_piper_rlt_stage2_replay_only.py",
+      "source": "rlt/source/rlinf/examples/embodiment/train_piper_rlt_stage2_replay_only.py",
+      "sha256": "75c1bb6b52efc1b4a1c444484504561ea800a8ff52c6d0f94c3b6ecb287676d0"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_piper_follower_rlt.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_piper_follower_rlt.py",
+      "sha256": "df47dbe110f8caa24771456168b90a92ed51ba4e2e9d900e3135aab37211666e"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_piper_rlt_schedule.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_piper_rlt_schedule.py",
+      "sha256": "5bf4590a7b1340461a24c56a1933bb44fc860fc7412a92e893d094d47edbe442"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_piper_rlt_targets.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_piper_rlt_targets.py",
+      "sha256": "6653dadf31cedc4272be4cec27e91dc5ca50774fdeb5a8795af261b78e072f3e"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_piper_four_can_rlt.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_piper_four_can_rlt.py",
+      "sha256": "8b8c5776073ce30db64a3f08b27fdb8ad2a48fe4d10eef2facbbf1c1b3d0817c"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_action_space.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_action_space.py",
+      "sha256": "271eba3fcdd8a9cb2969e23c63221a79df8e80eb4c50a8a5ef093912ba6660ef"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_projected_heads.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_projected_heads.py",
+      "sha256": "6cdc15086c372be15c790d4288187055924ca7d5f6e6504dfc0481122d118861"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_critical_reference_speed.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_critical_reference_speed.py",
+      "sha256": "f41333f8049863db3399d283c6cf5680800a7a484915b022267a041f1d0125e6"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_compact_server.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_compact_server.py",
+      "sha256": "f9ad8bea7a0844f20a40fed33eff71451b90eec4644a40c1a173a276b2107dfc"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_actor_correction_projection.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_actor_correction_projection.py",
+      "sha256": "a81aa54b1bb876288849bafb737098a63173d13e262bb85c7294295407b1d0ec"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_actor_exploration.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_actor_exploration.py",
+      "sha256": "97eca9354db29b73e7e7a36c1d043c73c62d4e5407d6cbc5e4269bedc31b8f51"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_rtc_alignment.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_rtc_alignment.py",
+      "sha256": "69272bac3486e9bd2838266e81debb5a31391f8a3c7dcafd46b8dd2d352f3fb1"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_piper_rlt_resume_replay.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_piper_rlt_resume_replay.py",
+      "sha256": "2f7a5c3858ffdfce44eb0fd373f3fbe1189e76e162e8daf57ee3a338303b0dae"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_merge_rlt_replay_buffers.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_merge_rlt_replay_buffers.py",
+      "sha256": "3a5fc4f2a21fb15485915974afef3bc6bdfef020b638e964a24eb5ab86b309a8"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_image_log.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_image_log.py",
+      "sha256": "3499d2090dd01583cedbb8107004f61793f87c656f1486109ee98fd278e8405b"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_head_pose.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_head_pose.py",
+      "sha256": "4c66b8563e04ccf1ee2fe517792f945381bba72ef77cfb3274d25e82803c56b0"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_residual_and_teaching.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_residual_and_teaching.py",
+      "sha256": "31ccea93fabb94f9f615beb62cd5a9add9e3ad9be995c380909490ad3ea14750"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_correction_continuity.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_correction_continuity.py",
+      "sha256": "7b28a7c4e3f72adc57101f7afb16eb4877ee1a35ebd09e4de4bb6e247eabb204"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_stride_windows.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_stride_windows.py",
+      "sha256": "744b07c2e3dbae66e7185f2d32dc2cd50886aa54630d65b7325bb7ebe76a688e"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_native_jax_rlt_offset_client.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_native_jax_rlt_offset_client.py",
+      "sha256": "9d870ef642193e72259cac1b99f1292a60023b0fe4969dfada9c975243528492"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_mlp_policy.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_mlp_policy.py",
+      "sha256": "6f6b6e204373c415f0a381bfc29f343fa09d6d769d9b84345c45115a5e5b6f38"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_native_jax_rlt_feature.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_native_jax_rlt_feature.py",
+      "sha256": "c5e70ff0e8dfdb966c4edfb2982fd6b92f51b3e62f040f5116f320f88a67df0f"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_takeover_as_failure.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_takeover_as_failure.py",
+      "sha256": "9f4f2b55c3a552db53d3e943a6cfadff0eb35a7fd066c9a7e184a737e9305dec"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_replay_only_runner.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_replay_only_runner.py",
+      "sha256": "924b256a2a56141796d6d3791ce387e26f83ac45e5800d724aaf7df174287f0c"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_stratified_replay.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_stratified_replay.py",
+      "sha256": "1b2ec04420734adcd9a7a8408af6a9b6c5b079798e0d63c749b304658195a756"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_rlt_bridge_delta.py",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_rlt_bridge_delta.py",
+      "sha256": "8fa81833dec2f721d89e344cde7cae692941183c66c53e12edb52fe1acc38219"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/offline_rl/config/piper_recap_value.yaml",
+      "source": "recap/configs/piper_recap_value.yaml",
+      "sha256": "fb4346d778acf0c27248934e2c52ff8376e1ed22dc3468993f2a6ffd5b976540"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/offline_rl/config/piper_recap_advantages.yaml",
+      "source": "recap/configs/piper_recap_advantages.yaml",
+      "sha256": "876ee425fc2c8b729b84ba1de44b367560e52aff2924a917fffd51bd6488d4a6"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/offline_rl/config/piper_recap_cfg.yaml",
+      "source": "recap/configs/piper_recap_cfg.yaml",
+      "sha256": "e3c39c76424043347b879b63ec4ada39b64fc0489273904c15ee6800927f1b5a"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/offline_rl/config/piper_recap_sft_int.yaml",
+      "source": "recap/configs/piper_recap_sft_int.yaml",
+      "sha256": "58e2014d5e6aa1428e94628546db0be80fe801f3eda984d6b35aa0153192d60a"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "examples/offline_rl/config/piper_recap_returns.yaml",
+      "source": "recap/configs/piper_recap_returns.yaml",
+      "sha256": "b387a5c8b66681cc6af56b5e68c6942aa349485a3be9f56360c63ea359b79ae6"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_recap_advantage_smoothing.py",
+      "source": "recap/source/rlinf/tests/unit_tests/test_recap_advantage_smoothing.py",
+      "sha256": "6a99ea67eafbaede8d4f04125ead1c1a226f0532f3033283ea7e7a7fae8acf1d"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_piper_recap.py",
+      "source": "recap/source/rlinf/tests/unit_tests/test_piper_recap.py",
+      "sha256": "4aeaf334d8f510e98acad6d311cde1f36555b3d2bba86f3efb1f6829a30ebba5"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_recap_value_binned_labels.py",
+      "source": "recap/source/rlinf/tests/unit_tests/test_recap_value_binned_labels.py",
+      "sha256": "33f97ccaacef830b9a4d351f7c3e368313d8534dc9375e9a94c405156c2729b4"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_recap_alignment_schedule.py",
+      "source": "recap/source/rlinf/tests/unit_tests/test_recap_alignment_schedule.py",
+      "sha256": "13ba9f859b8ae3cbc9a52bb3e3b789a22c7e9193a60a1b3eda020bbe022088c4"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_recap_mux_guard.py",
+      "source": "recap/source/rlinf/tests/unit_tests/test_recap_mux_guard.py",
+      "sha256": "8aefde06185a41b3b8f2c5dd2bce01bfa443cec3465b73e9732480c05d054a7f"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_recap_client_launcher.py",
+      "source": "recap/source/rlinf/tests/unit_tests/test_recap_client_launcher.py",
+      "sha256": "6d1e78feab6518d715972b717a23faa7cd08051fe013c09595e85bee7e149533"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_recap_client_blend.py",
+      "source": "recap/source/rlinf/tests/unit_tests/test_recap_client_blend.py",
+      "sha256": "927fc57002456c6852193ad67f28175f148f93b30e4067c57c5579b0b9c6ce95"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "file": "tests/unit_tests/test_cfg_image_preprocessing.py",
+      "source": "recap/source/rlinf/tests/unit_tests/test_cfg_image_preprocessing.py",
+      "sha256": "478486c5f4f45991a639a5a1850d5a781c6a38202cecd7e53f6cee6f156696d0"
+    },
+    {
+      "kind": "patch",
+      "dependency": "openpi",
+      "source": "common/patches/openpi.patch",
+      "sha256": "5d2781e4bcb4746d427c30f4717db4bdd8d664de90850baf5acb9a7dcf19f2cc"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "openpi",
+      "file": "examples/piper_real/main.py",
+      "source": "common/source/openpi/examples/piper_real/main.py",
+      "sha256": "10948820e7e7111567f19c448dae1ca70cf06f3c825fd684c7c03da6393ed793"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "openpi",
+      "file": "examples/piper_real/env.py",
+      "source": "common/source/openpi/examples/piper_real/env.py",
+      "sha256": "38e2e01dbd820a34ae89bbb589adb5b230cf186610e78463e8c28f83eff544be"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "openpi",
+      "file": "examples/piper_real/hold_aware_policy.py",
+      "source": "common/source/openpi/examples/piper_real/hold_aware_policy.py",
+      "sha256": "1c5c50cd8a99db370c020230bb8c33a65c22bee633f891dfc7f1ebfc740e8e2b"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "openpi",
+      "file": "examples/piper_real/rtc_action_chunk_broker.py",
+      "source": "common/source/openpi/examples/piper_real/rtc_action_chunk_broker.py",
+      "sha256": "465ddf6949fd0ab64d41a76c2a87408a3ac5737ead946f68dcb68d1c74079d9b"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "openpi",
+      "file": "examples/piper_real/saver.py",
+      "source": "common/source/openpi/examples/piper_real/saver.py",
+      "sha256": "ca32c0609cb109ecb1131a716056c1cbf7fc95f4f815daaeee9af8ed2675a050"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "openpi",
+      "file": "examples/piper_real/__init__.py",
+      "source": "common/source/openpi/examples/piper_real/__init__.py",
+      "sha256": "4f0e1c487406cee9c3ae6180e21ff10afe2c14b284afc390674ed10c2d4492b0"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "openpi",
+      "file": "src/openpi/training/config.py",
+      "source": "common/source/openpi/src/openpi/training/config.py",
+      "sha256": "2708d792bab881b0a04ba283073e6f1390f00823e0d65faa6902809201e1db59"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "openpi",
+      "file": "src/openpi/policies/piper_roi_policy.py",
+      "source": "common/source/openpi/src/openpi/policies/piper_roi_policy.py",
+      "sha256": "6ef705239b2579022f53e246038952f130fcd34d192be43157f1e72328c91cc8"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "source": "rlt/configs/piper_rlt_base.yaml",
+      "file": "examples/embodiment/config/piper_rlt_base.yaml",
+      "sha256": "969ce5b1b5aff4a38187efb8d8c24371cf36aaf53e8d68c639d1b5b121ba5d4b"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_piper_mux_executor.py",
+      "file": "tests/unit_tests/test_piper_mux_executor.py",
+      "sha256": "cb52bc1d9002f97b09ab2a700df14953c96ade11644575a95110b0134078576d"
+    },
+    {
+      "kind": "overlay",
+      "dependency": "rlinf",
+      "source": "rlt/source/rlinf/tests/unit_tests/test_piper_leader_takeover.py",
+      "file": "tests/unit_tests/test_piper_leader_takeover.py",
+      "sha256": "751a15a3a931b1f1862d2093b5f48364c2cc06719cc0bc88bb79214e5275b522"
+    }
+  ]
+}

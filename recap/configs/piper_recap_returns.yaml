@@ -1,0 +1,17 @@
+defaults:
+- recap_compute_returns
+- _self_
+data:
+  dataset_type: rollout
+  train_data_paths:
+  - dataset_path: ${oc.env:RECAP_DATASET}
+    type: rollout
+  - dataset_path: ${oc.env:RECAP_SFT_DATASET}
+    type: sft
+  gamma: 1.0
+  failure_reward: -3500.0
+  takeover_penalty: 300.0
+  stage_total: 3
+  stage_failure_cost: 0.0
+  tag: piper_recap_v1
+  num_workers: 4

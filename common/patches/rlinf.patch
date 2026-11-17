@@ -1,0 +1,508 @@
+diff --git a/rlinf/config.py b/rlinf/config.py
+index 04979267..8c3a51f2 100644
+--- a/rlinf/config.py
++++ b/rlinf/config.py
+@@ -89,6 +89,9 @@ SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
+ SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
+ SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
+ SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
++SupportedModel.NATIVE_JAX_RLT_FEATURE = SupportedModel.register(
++    "native_jax_rlt_feature", force=True
++)
+ SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
+ SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
+ SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
+diff --git a/rlinf/hybrid_engines/fsdp/utils.py b/rlinf/hybrid_engines/fsdp/utils.py
+index 25d65e75..3f3c2ffb 100644
+--- a/rlinf/hybrid_engines/fsdp/utils.py
++++ b/rlinf/hybrid_engines/fsdp/utils.py
+@@ -275,16 +275,12 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
+         policies.append(value_head_policy)
+ 
+     if hasattr(module, "q_head"):
+-        from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
+-
+-        if isinstance(module.q_head, MultiCrossQHead):
+-            q_head_policy = functools.partial(
+-                _module_wrap_policy, module_classes={MultiCrossQHead}
+-            )
+-        else:
+-            q_head_policy = functools.partial(
+-                _module_wrap_policy, module_classes={MultiQHead}
+-            )
++        # Wrap the Q head as its own FSDP unit whatever its class is, so its
++        # flattened parameters keep the "q_head" prefix that routes them to
++        # the critic optimizer (MultiQHead, MultiCrossQHead, RLT heads, ...).
++        q_head_policy = functools.partial(
++            _module_wrap_policy, module_classes={type(module.q_head)}
++        )
+         policies.append(q_head_policy)
+ 
+     if module_classes_to_wrap:
+diff --git a/rlinf/models/__init__.py b/rlinf/models/__init__.py
+index 3fcb5adf..e787d9a5 100644
+--- a/rlinf/models/__init__.py
++++ b/rlinf/models/__init__.py
+@@ -81,6 +81,11 @@ def _register_builtin_models():
+ 
+         return get_model(cfg, torch_dtype)
+ 
++    def _build_native_jax_rlt_feature(cfg: DictConfig, torch_dtype):
++        from rlinf.models.embodiment.native_jax_rlt import get_model
++
++        return get_model(cfg, torch_dtype)
++
+     def _build_gr00t(cfg: DictConfig, torch_dtype):
+         from rlinf.models.embodiment.gr00t import get_model
+ 
+@@ -183,6 +188,12 @@ def _register_builtin_models():
+         category="embodied",
+         force=True,
+     )
++    register_model(
++        SupportedModel.NATIVE_JAX_RLT_FEATURE.value,
++        _build_native_jax_rlt_feature,
++        category="embodied",
++        force=True,
++    )
+     register_model(
+         SupportedModel.GR00T.value,
+         _build_gr00t,
+diff --git a/rlinf/utils/ckpt_convertor/convert_openpi_jax_to_python.py b/rlinf/utils/ckpt_convertor/convert_openpi_jax_to_python.py
+index 3e27d36f..e93e7ff1 100644
+--- a/rlinf/utils/ckpt_convertor/convert_openpi_jax_to_python.py
++++ b/rlinf/utils/ckpt_convertor/convert_openpi_jax_to_python.py
+@@ -32,6 +32,7 @@ python rlinf/utils/ckpt_convertor/convert_openpi_jax_to_python.py
+     --config_name pi0_aloha_pen_uncap
+ """
+ 
++import hashlib
+ import json
+ import os
+ import pathlib
+@@ -51,6 +52,238 @@ import tyro
+ from flax.nnx import traversals
+ from openpi.training import utils
+ 
++from rlinf.models.embodiment.openpi.native_lora import apply_native_jax_lora
++
++
++def _sha256_file(path: pathlib.Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as file:
++        while chunk := file.read(8 * 1024 * 1024):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def build_source_provenance(checkpoint_dir: str) -> dict[str, object]:
++    """Build a stable fingerprint for the JAX checkpoint used for conversion."""
++    root = pathlib.Path(checkpoint_dir).resolve()
++    relative_paths = [
++        "_CHECKPOINT_METADATA",
++        "params/_METADATA",
++        "params/_sharding",
++        "params/manifest.ocdbt",
++        "assets/total_data/norm_stats.json",
++    ]
++    # Orbax stores the actual tensor payload below params/d and
++    # params/ocdbt.process_*/d. Fingerprinting metadata alone would not prove
++    # which learned weights were converted.
++    relative_paths.extend(
++        path.relative_to(root).as_posix()
++        for path in sorted((root / "params").glob("**/d/*"))
++        if path.is_file()
++    )
++    artifacts = {}
++    for relative_path in relative_paths:
++        path = root / relative_path
++        if path.is_file():
++            artifacts[relative_path] = _sha256_file(path)
++    if not artifacts:
++        raise ValueError(
++            f"Cannot fingerprint JAX checkpoint {root}: no checkpoint metadata found."
++        )
++    canonical = json.dumps(artifacts, sort_keys=True, separators=(",", ":")).encode()
++    return {
++        "source_checkpoint": str(root),
++        "source_artifact_sha256": artifacts,
++        "source_provenance_sha256": hashlib.sha256(canonical).hexdigest(),
++    }
++
++
++def merge_lora_weights(
++    state_dict: dict[str, np.ndarray], *, scaling: float = 1.0
++) -> int:
++    """Merge flattened OpenPI LoRA leaves into their base Gemma weights.
++
++    OpenPI stores trained LoRA checkpoints as separate ``value``, ``lora_a``
++    and ``lora_b`` leaves.  The PyTorch PI0 implementation used by RLinf has
++    ordinary linear layers, so the adapter must be materialized as
++    ``weight + scaling * (lora_a @ lora_b)`` before the existing JAX-to-Torch
++    layout conversion runs.
++
++    Both current OpenPI LoRA Gemma variants use ``alpha == rank``, hence a
++    scaling value of 1.0.  The argument remains explicit so this helper cannot
++    silently assume that for a future checkpoint.
++
++    Args:
++        state_dict: Flattened JAX parameter mapping. It is updated in place.
++        scaling: OpenPI LoRA's ``alpha / rank`` scaling value.
++
++    Returns:
++        The number of base weights into which adapters were merged.
++    """
++    merged = 0
++    lora_a_keys = [
++        key
++        for key in state_dict
++        if key.endswith(("/lora_a/value", "_lora_a/value", "/lora_a", "_lora_a"))
++    ]
++
++    for lora_a_key in lora_a_keys:
++        has_value_suffix = lora_a_key.endswith("/value")
++        value_suffix = "/value" if has_value_suffix else ""
++        key_without_value = lora_a_key.removesuffix(value_suffix)
++        if key_without_value.endswith("/lora_a"):
++            module_prefix = key_without_value.removesuffix("/lora_a")
++            base_key = f"{module_prefix}/w{value_suffix}"
++            lora_b_key = f"{module_prefix}/lora_b{value_suffix}"
++        else:
++            base_key = key_without_value.replace("_lora_a", "") + value_suffix
++            lora_b_key = key_without_value.replace("_lora_a", "_lora_b") + value_suffix
++
++        missing = [key for key in (base_key, lora_b_key) if key not in state_dict]
++        if missing:
++            raise KeyError(
++                f"Incomplete LoRA parameters for {lora_a_key}: missing {missing}"
++            )
++
++        base = np.asarray(state_dict[base_key])
++        lora_a = np.asarray(state_dict[lora_a_key])
++        lora_b = np.asarray(state_dict[lora_b_key])
++        expected_shape = (*lora_a.shape[:-2], lora_a.shape[-2], lora_b.shape[-1])
++        if expected_shape != base.shape or lora_a.shape[:-2] != lora_b.shape[:-2]:
++            raise ValueError(
++                f"LoRA shape mismatch for {base_key}: base={base.shape}, "
++                f"A={lora_a.shape}, B={lora_b.shape}, A@B={expected_shape}"
++            )
++
++        # Conversion restores weights as float32. Merge one leading-index slice
++        # at a time: a full batched A@B for the 2B FFN is several GiB and can
++        # otherwise exhaust RAM before the Torch model is even instantiated.
++        merged_weight = base if base.dtype == np.float32 else base.astype(np.float32)
++        for index in np.ndindex(base.shape[:-2]):
++            update = np.matmul(lora_a[index], lora_b[index], dtype=np.float32)
++            merged_weight[index] += float(scaling) * update
++        state_dict[base_key] = merged_weight
++        del state_dict[lora_a_key]
++        del state_dict[lora_b_key]
++        merged += 1
++
++    dangling_lora = [key for key in state_dict if "lora_a" in key or "lora_b" in key]
++    if dangling_lora:
++        raise ValueError(f"Unmerged LoRA parameters remain: {dangling_lora[:5]}")
++
++    return merged
++
++
++def extract_native_lora_weights(
++    state_dict: dict[str, np.ndarray],
++) -> dict[str, np.ndarray]:
++    """Remove and return all JAX LoRA A/B leaves without materializing them."""
++    adapters = {
++        key: np.asarray(state_dict.pop(key))
++        for key in list(state_dict)
++        if "lora_a" in key or "lora_b" in key
++    }
++    if len(adapters) != 20:
++        raise ValueError(
++            f"Expected 20 stacked JAX LoRA A/B tensors, found {len(adapters)}"
++        )
++    return adapters
++
++
++def convert_native_lora_state_dict(
++    adapters: dict[str, np.ndarray],
++) -> dict[str, torch.Tensor]:
++    """Map stacked JAX Gemma adapters to exact per-layer PyTorch branches."""
++    converted: dict[str, torch.Tensor] = {}
++
++    def add_stack(*, expert: bool, rank: int) -> None:
++        suffix = "_1" if expert else ""
++        prefix = (
++            "paligemma_with_expert.gemma_expert.model.layers"
++            if expert
++            else "paligemma_with_expert.paligemma.model.language_model.layers"
++        )
++        mlp_name = f"mlp{suffix}"
++
++        q_a = adapters[f"llm/layers/attn/q_einsum{suffix}/lora_a"]
++        q_b = adapters[f"llm/layers/attn/q_einsum{suffix}/lora_b"]
++        kv_a = adapters[f"llm/layers/attn/kv_einsum{suffix}/lora_a"]
++        kv_b = adapters[f"llm/layers/attn/kv_einsum{suffix}/lora_b"]
++        o_a = adapters[f"llm/layers/attn/attn_vec_einsum{suffix}/lora_a"]
++        o_b = adapters[f"llm/layers/attn/attn_vec_einsum{suffix}/lora_b"]
++        gate_a = adapters[f"llm/layers/{mlp_name}/gating_einsum_lora_a"]
++        gate_b = adapters[f"llm/layers/{mlp_name}/gating_einsum_lora_b"]
++        down_a = adapters[f"llm/layers/{mlp_name}/linear_lora_a"]
++        down_b = adapters[f"llm/layers/{mlp_name}/linear_lora_b"]
++
++        if q_a.shape[0] != 18 or q_a.shape[-1] != rank:
++            raise ValueError(f"Unexpected native LoRA shape: {q_a.shape}")
++        for layer in range(18):
++            root = f"{prefix}.{layer}"
++            # Query and output adapters retain their independent head axis.
++            converted[f"{root}.self_attn.q_proj.lora_a"] = torch.from_numpy(
++                q_a[layer]
++            )
++            converted[f"{root}.self_attn.q_proj.lora_b"] = torch.from_numpy(
++                q_b[layer]
++            )
++            converted[f"{root}.self_attn.o_proj.lora_a"] = torch.from_numpy(
++                o_a[layer]
++            )
++            converted[f"{root}.self_attn.o_proj.lora_b"] = torch.from_numpy(
++                o_b[layer]
++            )
++            # K/V and the three MLP projections are conventional linear LoRA.
++            for index, name in enumerate(("k_proj", "v_proj")):
++                converted[f"{root}.self_attn.{name}.lora_a"] = torch.from_numpy(
++                    kv_a[layer, index, 0].T
++                )
++                converted[f"{root}.self_attn.{name}.lora_b"] = torch.from_numpy(
++                    kv_b[layer, index, 0].T
++                )
++            for index, name in enumerate(("gate_proj", "up_proj")):
++                converted[f"{root}.mlp.{name}.lora_a"] = torch.from_numpy(
++                    gate_a[layer, index].T
++                )
++                converted[f"{root}.mlp.{name}.lora_b"] = torch.from_numpy(
++                    gate_b[layer, index].T
++                )
++            converted[f"{root}.mlp.down_proj.lora_a"] = torch.from_numpy(
++                down_a[layer].T
++            )
++            converted[f"{root}.mlp.down_proj.lora_b"] = torch.from_numpy(
++                down_b[layer].T
++            )
++
++    add_stack(expert=False, rank=16)
++    add_stack(expert=True, rank=32)
++    if len(converted) != 504:
++        raise ValueError(
++            f"Expected 504 per-layer native LoRA parameters, got {len(converted)}"
++        )
++    return converted
++
++
++def _get_model_config(config_name: str) -> openpi.models.pi0_config.Pi0Config:
++    """Resolve a Pi0 model config, including local Cobot Magic training configs.
++
++    RLinf's OpenPI fork does not carry every task-specific entry added to the
++    local OpenPI checkout.  Conversion only needs the architecture fields, not
++    the dataset transform.  Keep the wire entry here so the JAX LoRA checkpoint
++    is converted with exactly the architecture used for its training.
++    """
++    if config_name == "pi05_wire":
++        return openpi.models.pi0_config.Pi0Config(
++            pi05=True,
++            paligemma_variant="gemma_2b_lora",
++            action_expert_variant="gemma_300m_lora",
++        )
++
++    model_config = _config.get_config(config_name).model
++    if not isinstance(model_config, openpi.models.pi0_config.Pi0Config):
++        raise ValueError(f"Config {config_name} is not a Pi0Config")
++    return model_config
++
+ 
+ def slice_paligemma_state_dict(state_dict, config):
+     """Convert PaliGemma JAX parameters to PyTorch format."""
+@@ -528,6 +761,8 @@ def convert_pi0_checkpoint(
+     precision: str,
+     output_path: str,
+     model_config: openpi.models.pi0_config.Pi0Config,
++    *,
++    lora_mode: Literal["merge", "native"] = "merge",
+ ):
+     """
+     Convert PI0 JAX checkpoint to PyTorch format.
+@@ -546,6 +781,45 @@ def convert_pi0_checkpoint(
+         checkpoint_dir=checkpoint_dir, restore_precision="float32"
+     )
+ 
++    paligemma_config = openpi.models.gemma.get_config(model_config.paligemma_variant)
++    action_expert_config = openpi.models.gemma.get_config(
++        model_config.action_expert_variant
++    )
++    lora_scalings = {
++        config.scaling_value
++        for gemma_config in (paligemma_config, action_expert_config)
++        for config in gemma_config.lora_configs.values()
++    }
++    if len(lora_scalings) > 1:
++        raise ValueError(
++            f"Converter cannot merge mixed LoRA scaling values: {lora_scalings}"
++        )
++    lora_scaling = next(iter(lora_scalings), 1.0)
++    native_lora_params: dict[str, torch.Tensor] = {}
++    if lora_mode == "native":
++        native_adapters = extract_native_lora_weights(
++            initial_params["paligemma_params"]
++        )
++        native_lora_params = convert_native_lora_state_dict(native_adapters)
++        merged_lora_count = 0
++        print(
++            "Preserving 252 JAX LoRA projection branches as 504 native "
++            "PyTorch A/B parameters."
++        )
++    else:
++        merged_lora_count = merge_lora_weights(
++            initial_params["paligemma_params"], scaling=lora_scaling
++        )
++        if lora_scalings and merged_lora_count == 0:
++            raise ValueError(
++                "The model config enables LoRA, but the checkpoint contains no "
++                "LoRA parameters."
++            )
++        print(
++            f"Merged {merged_lora_count} OpenPI LoRA tensors into Gemma base "
++            f"weights (scaling={lora_scaling})."
++        )
++
+     # Process projection params
+     if model_config.pi05:
+         keys = [
+@@ -609,8 +883,6 @@ def convert_pi0_checkpoint(
+             )()
+ 
+     paligemma_config = PaliGemmaConfig()
+-    action_expert_config = openpi.models.gemma.get_config("gemma_300m")
+-
+     # Process PaliGemma weights
+     paligemma_params, expert_params = slice_paligemma_state_dict(
+         initial_params["paligemma_params"], paligemma_config
+@@ -627,12 +899,40 @@ def convert_pi0_checkpoint(
+ 
+     # Instantiate model
+     pi0_model = openpi.models_pytorch.pi0_pytorch.PI0Pytorch(model_config)
++    if lora_mode == "native":
++        injected = apply_native_jax_lora(pi0_model)
++        if injected != 252:
++            raise ValueError(f"Expected 252 injected LoRA projections, got {injected}")
+ 
+     # Combine all parameters (no prefix needed for our model structure)
+-    all_params = {**paligemma_params, **gemma_params, **projection_params}
++    all_params = {
++        **paligemma_params,
++        **gemma_params,
++        **projection_params,
++        **native_lora_params,
++    }
+ 
+-    # Load state dict
+-    pi0_model.load_state_dict(all_params, strict=False)
++    # The action expert consumes input embeddings supplied by PI0 and never
++    # calls its causal LM head. It is the only parameter absent from the JAX
++    # architecture. Refuse every other incomplete or unexpected conversion.
++    incompatible = pi0_model.load_state_dict(all_params, strict=False)
++    allowed_missing = {
++        "paligemma_with_expert.gemma_expert.lm_head.weight",
++        # Transformers ties this output head to the PaliGemma input embedding;
++        # the JAX tree stores the shared tensor under the embedding name only.
++        "paligemma_with_expert.paligemma.lm_head.weight",
++    }
++    unexpected_missing = set(incompatible.missing_keys) - allowed_missing
++    if unexpected_missing or incompatible.unexpected_keys:
++        raise ValueError(
++            "Incomplete JAX-to-PyTorch conversion: "
++            f"missing={sorted(unexpected_missing)}, "
++            f"unexpected={sorted(incompatible.unexpected_keys)}"
++        )
++    with torch.no_grad():
++        # Make the unused parameter deterministic instead of persisting the
++        # random Transformers initialization in every converted checkpoint.
++        pi0_model.paligemma_with_expert.gemma_expert.lm_head.weight.zero_()
+ 
+     if precision == "float32":
+         pi0_model = pi0_model.to(torch.float32)
+@@ -648,22 +948,41 @@ def convert_pi0_checkpoint(
+     safetensors.torch.save_model(
+         pi0_model, os.path.join(output_path, "model.safetensors")
+     )
++    converted_model_sha256 = _sha256_file(
++        pathlib.Path(output_path) / "model.safetensors"
++    )
+ 
+-    # Copy assets folder if it exists
+-    assets_source = pathlib.Path(checkpoint_dir).parent / "assets"
++    # Fine-tuning checkpoints save assets inside the numbered checkpoint,
++    # whereas base releases commonly keep them one directory above it.
++    # Prefer the checkpoint-local copy so its norm_stats exactly match the
++    # converted weights.
++    checkpoint_path = pathlib.Path(checkpoint_dir)
++    assets_source = checkpoint_path / "assets"
++    if not assets_source.exists():
++        assets_source = checkpoint_path.parent / "assets"
+     if assets_source.exists():
+         assets_dest = pathlib.Path(output_path) / "assets"
+         if assets_dest.exists():
+             shutil.rmtree(assets_dest)
+-        shutil.copytree(assets_source, assets_dest)
++        # Checkpoints can contain dataset symlinks (including self-referential
++        # links). Preserve links rather than following them recursively.
++        shutil.copytree(assets_source, assets_dest, symlinks=True)
+ 
+     # Save config as JSON for reference
+     config_dict = {
++        "image_keys": list(getattr(model_config, "image_keys", ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"))),
+         "action_dim": model_config.action_dim,
+         "action_horizon": model_config.action_horizon,
+         "paligemma_variant": model_config.paligemma_variant,
+         "action_expert_variant": model_config.action_expert_variant,
+         "precision": precision,
++        "merged_lora_tensors": merged_lora_count,
++        "lora_format": "native_jax" if lora_mode == "native" else "merged",
++        "native_lora_projection_count": 252 if lora_mode == "native" else 0,
++        "native_lora_parameter_count": 504 if lora_mode == "native" else 0,
++        "lora_scaling": lora_scaling,
++        "converted_model_sha256": converted_model_sha256,
++        **build_source_provenance(checkpoint_dir),
+     }
+     with open(os.path.join(output_path, "config.json"), "w") as f:
+         json.dump(config_dict, f, indent=2)
+@@ -679,6 +998,7 @@ def main(
+     precision: Literal["float32", "bfloat16", "float16"] = "bfloat16",
+     *,
+     inspect_only: bool = False,
++    lora_mode: Literal["merge", "native"] = "merge",
+ ):
+     """Load JAX model and optionally convert to PyTorch.
+ 
+@@ -688,9 +1008,7 @@ def main(
+         precision: Precision for model conversion
+         inspect_only: Only inspect parameter keys, don't convert
+     """
+-    model_config = _config.get_config(config_name).model
+-    if not isinstance(model_config, openpi.models.pi0_config.Pi0Config):
+-        raise ValueError(f"Config {config_name} is not a Pi0Config")
++    model_config = _get_model_config(config_name)
+     if inspect_only:
+         load_jax_model_and_print_keys(checkpoint_dir)
+     else:
+@@ -699,7 +1017,13 @@ def main(
+                 "Error: --output_path is required for conversion. Use --inspect_only to only view keys."
+             )
+             return
+-        convert_pi0_checkpoint(checkpoint_dir, precision, output_path, model_config)
++        convert_pi0_checkpoint(
++            checkpoint_dir,
++            precision,
++            output_path,
++            model_config,
++            lora_mode=lora_mode,
++        )
+ 
+ 
+ if __name__ == "__main__":

@@ -1,0 +1,19 @@
+defaults:
+  - realworld_piper_rlt_stage2_ac_mlp
+  - _self_
+algorithm:
+  head_pose_shaping:
+    enable: false
+actor:
+  model:
+    head_pose_dim: 0
+rollout:
+  rlt_feature_model:
+    head_pose_dim: 0
+env:
+  train:
+    override_cfg:
+      head_pose_weights: null
+  eval:
+    override_cfg:
+      head_pose_weights: null

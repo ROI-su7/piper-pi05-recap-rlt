@@ -1,0 +1,1223 @@
+diff --git a/examples/offline_rl/advantage_labeling/recap/process/compute_advantages.py b/examples/offline_rl/advantage_labeling/recap/process/compute_advantages.py
+index 1082adce..e36d69e1 100644
+--- a/examples/offline_rl/advantage_labeling/recap/process/compute_advantages.py
++++ b/examples/offline_rl/advantage_labeling/recap/process/compute_advantages.py
+@@ -59,7 +59,15 @@ from rlinf.data.datasets.recap.utils import (
+     load_return_stats_from_dataset,
+     load_returns_sidecar,
+ )
+-from rlinf.data.process.advantage import apply_boolean_label, quantile_threshold
++from rlinf.data.process.advantage import (
++    apply_boolean_label,
++    apply_value_binned_label,
++    quantile_threshold,
++    smoothed_td_advantages,
++    smoothing_window,
++    threshold_scores,
++    value_binned_thresholds,
++)
+ from rlinf.data.process.distributed import (
+     cleanup_distributed,
+     gather_dataframes_to_rank0,
+@@ -77,6 +85,13 @@ logger = logging.getLogger(__name__)
+ 
+ # Maps LeRobot dataset keys to value model observation format
+ KEY_MAPPINGS = {
++    "piper": {
++        "observation.images.cam_high": "observation/image",
++        "observation.images.cam_left_wrist": "observation/extra_view_image-0",
++        "observation.images.cam_right_wrist": "observation/extra_view_image-1",
++        "observation.state": "observation/state",
++        "task": "prompt",
++    },
+     "franka": {
+         # Multi-cam format (front_cam + wrist_cam)
+         "observation.images.front_cam": "observation/images/front_cam",
+@@ -279,6 +294,8 @@ def load_lerobot_dataset(
+     dataset = LeRobotDataset(
+         str(dataset_path),
+         download_videos=False,
++        # e.g. "pyav" on hosts whose torchcodec cannot load FFmpeg.
++        video_backend=os.environ.get("RECAP_VIDEO_BACKEND") or None,
+     )
+     dataset.hf_dataset.set_transform(decode_image_struct_batch)
+ 
+@@ -314,6 +331,8 @@ def build_obs(
+     Returns:
+         Raw observation dict compatible with ValueCriticModel.infer()
+     """
++    if robot_type == "piper_roi":
++        robot_type = "piper"
+     if robot_type not in KEY_MAPPINGS:
+         raise ValueError(
+             f"Unknown robot_type {robot_type!r}. "
+@@ -861,6 +880,56 @@ def compute_advantages_for_dataset(
+         return pd.DataFrame(results)
+ 
+ 
++def _flag(value) -> bool:
++    """Unwrap a LeRobot bool feature stored as a scalar or one-element list."""
++    flag = np.asarray(value)
++    if flag.size != 1 or flag.reshape(-1)[0] not in (True, False, 0, 1):
++        raise ValueError(f"Invalid boolean flag: {flag!r}")
++    return bool(flag.reshape(-1)[0])
++
++
++def load_intervention_frames(
++    dataset_path: Path, success_only: bool = True
++) -> set[tuple[int, int]]:
++    """Return (episode_index, frame_index) keys of human-controlled frames.
++
++    Reads only the small ``intervention``/``is_success`` columns. With
++    ``success_only``, keeps frames from episodes whose terminal frame is
++    successful (Evo-RL); otherwise keeps every correction (pi*0.6).
++    """
++    import pyarrow.parquet as pq
++
++    human: dict[int, list[int]] = {}
++    terminal: dict[int, tuple[int, bool]] = {}
++    for pq_file in sorted((Path(dataset_path) / "data").rglob("*.parquet")):
++        available = set(pq.ParquetFile(pq_file).schema_arrow.names)
++        if "intervention" not in available:
++            return set()
++        columns = ["episode_index", "frame_index", "intervention"]
++        if success_only:
++            if "is_success" not in available:
++                raise ValueError(
++                    f"{pq_file} has no is_success column; cannot select successful "
++                    "interventions."
++                )
++            columns.append("is_success")
++        table = pq.read_table(pq_file, columns=columns).to_pydict()
++        for i, (ep, fr) in enumerate(
++            zip(table["episode_index"], table["frame_index"], strict=True)
++        ):
++            ep, fr = int(ep), int(fr)
++            if _flag(table["intervention"][i]):
++                human.setdefault(ep, []).append(fr)
++            if success_only and fr >= terminal.get(ep, (-1, False))[0]:
++                terminal[ep] = (fr, _flag(table["is_success"][i]))
++    return {
++        (ep, fr)
++        for ep, frames in human.items()
++        if not success_only or terminal[ep][1]
++        for fr in frames
++    }
++
++
+ def save_advantages_to_dataset(
+     dataset_path: Path,
+     advantages_df: pd.DataFrame,
+@@ -869,6 +938,8 @@ def save_advantages_to_dataset(
+     rank: int = 0,
+     world_size: int = 1,
+     tag: str | None = None,
++    forced_positive: set[tuple[int, int]] | None = None,
++    value_bins: tuple | None = None,
+ ):
+     """Save advantages parquet directly into the source dataset's meta/ directory.
+ 
+@@ -886,6 +957,10 @@ def save_advantages_to_dataset(
+         rank: Current process rank
+         world_size: Total number of processes
+         tag: Optional tag for advantages parquet filename
++        forced_positive: (episode_index, frame_index) keys labelled True
++            regardless of threshold, e.g. human corrections
++        value_bins: Optional ``(edges, thresholds)`` per value bin; replaces
++            ``threshold`` for non-sft datasets
+     """
+     if rank == 0:
+         meta_dir = dataset_path / "meta"
+@@ -896,11 +971,29 @@ def save_advantages_to_dataset(
+         save_df.rename(columns={"advantage": "advantage_continuous"}, inplace=True)
+         if (dataset_type or "").lower() == "sft":
+             save_df["advantage"] = True
++        elif value_bins is not None:
++            save_df["advantage"] = apply_value_binned_label(
++                save_df["advantage_continuous"],
++                save_df["value_current"],
++                *value_bins,
++            )
+         else:
+             # Shared with STEAM (RECAP uses the inclusive `>=` convention).
+             save_df["advantage"] = apply_boolean_label(
+                 save_df["advantage_continuous"], threshold, inclusive=True
+             )
++        if forced_positive:
++            keys = zip(
++                save_df["episode_index"].astype(int), save_df["frame_index"].astype(int)
++            )
++            save_df["forced_positive"] = [key in forced_positive for key in keys]
++            newly = int((save_df["forced_positive"] & ~save_df["advantage"]).sum())
++            save_df["advantage"] = save_df["advantage"] | save_df["forced_positive"]
++            logger.info(
++                f"  Forced {int(save_df['forced_positive'].sum())} intervention frames "
++                f"positive ({newly} were below threshold); positive rate now "
++                f"{save_df['advantage'].mean() * 100:.1f}%"
++            )
+ 
+         adv_filename = f"advantages_{tag}.parquet" if tag else "advantages.parquet"
+         save_df.to_parquet(meta_dir / adv_filename, index=False)
+@@ -939,6 +1032,8 @@ def compute_advantages(cfg: DictConfig) -> None:
+         )
+ 
+         all_advantages = []
++        all_values = []
++        all_dataset_types = []
+         dataset_results = {}
+ 
+         # Priority: 1) global config  2) compute from all datasets' stats.json
+@@ -1053,8 +1148,43 @@ def compute_advantages(cfg: DictConfig) -> None:
+             else:
+                 df = local_df
+ 
++            # Optional temporal smoothing of V before the N-step difference:
++            # per-frame value noise otherwise dominates a short lookahead.
++            smoothing_s = float(cfg.advantage.get("value_smoothing_s", 0.0))
++            if smoothing_s > 0 and len(df) > 0:
++                if abs(float(cfg.data.gamma) - 1.0) > 1e-8:
++                    raise ValueError(
++                        "advantage.value_smoothing_s requires data.gamma=1."
++                    )
++                window = smoothing_window(smoothing_s, meta.fps)
++                df = df.sort_values(["episode_index", "frame_index"]).reset_index(
++                    drop=True
++                )
++                df["value_current_raw"] = df["value_current"]
++                (
++                    df["advantage"],
++                    df["value_current"],
++                    df["value_next"],
++                    df["reward_sum"],
++                ) = smoothed_td_advantages(
++                    df["episode_index"].to_numpy(),
++                    df["return"].to_numpy(),
++                    df["value_current"].to_numpy(),
++                    lookahead=int(cfg.data.advantage_lookahead_step),
++                    window=window,
++                    return_min=global_return_min,
++                    return_max=global_return_max,
++                )
++                if rank == 0:
++                    logger.info(
++                        f"  Value smoothing: {smoothing_s}s = {window} frames at "
++                        f"{meta.fps} fps (lookahead {cfg.data.advantage_lookahead_step})"
++                    )
++
+             df["dataset_name"] = ds_path.name
+             all_advantages.append(df["advantage"].values)
++            all_values.append(df["value_current"].values)
++            all_dataset_types.append(ds_cfg.get("type", "sft"))
+             dataset_results[ds_path] = {
+                 "df": df,
+                 "config": OmegaConf.to_container(ds_cfg),
+@@ -1073,9 +1203,39 @@ def compute_advantages(cfg: DictConfig) -> None:
+         global_pbar.close()
+ 
+         positive_quantile = cfg.advantage.get("positive_quantile", 0.3)
+-        combined_advantages = np.concatenate(all_advantages)
++        # Optionally set the threshold on some dataset types only (e.g. the
++        # robot's own rollouts, as pi*0.6 fine-tuning does); all are labelled.
++        threshold_types = cfg.advantage.get("threshold_dataset_types", None)
++        combined_advantages = threshold_scores(
++            all_advantages,
++            all_dataset_types,
++            None if threshold_types is None else list(threshold_types),
++        )
++        if rank == 0 and threshold_types is not None:
++            logger.info(
++                f"  Threshold computed on dataset types: {list(threshold_types)}"
++            )
+         # Shared with STEAM: same top-fraction quantile rule (rlinf.data.process.advantage).
+         unified_threshold = quantile_threshold(combined_advantages, positive_quantile)
++        value_bin_count = int(cfg.advantage.get("value_bins", 0) or 0)
++        value_bins = None
++        if value_bin_count > 1:
++            value_bins = value_binned_thresholds(
++                combined_advantages,
++                threshold_scores(
++                    all_values,
++                    all_dataset_types,
++                    None if threshold_types is None else list(threshold_types),
++                ),
++                positive_quantile,
++                value_bin_count,
++            )
++            if rank == 0:
++                logger.info(
++                    f"  Value-binned thresholds ({len(value_bins[1])} bins): "
++                    f"edges={np.round(value_bins[0], 4).tolist()} "
++                    f"thresholds={np.round(value_bins[1], 4).tolist()}"
++                )
+ 
+         if rank == 0:
+             logger.info(f"\n{'=' * 60}")
+@@ -1117,11 +1277,27 @@ def compute_advantages(cfg: DictConfig) -> None:
+         tag_stats = {
+             "unified_threshold": unified_threshold,
+             "positive_quantile": positive_quantile,
++            "value_bin_edges": (
++                None if value_bins is None else value_bins[0].tolist()
++            ),
++            "value_bin_thresholds": (
++                None if value_bins is None else value_bins[1].tolist()
++            ),
++            "force_intervention_positive": bool(
++                cfg.advantage.get("force_intervention_positive", False)
++            ),
+         }
+ 
++        force_intervention = bool(
++            cfg.advantage.get("force_intervention_positive", False)
++        )
++        success_only = bool(cfg.advantage.get("intervention_success_only", True))
+         for ds_path, result in dataset_results.items():
+             df = result["df"]
+             dataset_type = result["config"].get("type")
++            forced = None
++            if force_intervention and (dataset_type or "").lower() != "sft":
++                forced = load_intervention_frames(ds_path, success_only=success_only)
+             save_advantages_to_dataset(
+                 dataset_path=ds_path,
+                 advantages_df=df,
+@@ -1130,6 +1306,8 @@ def compute_advantages(cfg: DictConfig) -> None:
+                 rank=rank,
+                 world_size=world_size,
+                 tag=tag,
++                forced_positive=forced,
++                value_bins=value_bins,
+             )
+ 
+             if rank == 0:
+diff --git a/examples/offline_rl/advantage_labeling/recap/process/compute_returns.py b/examples/offline_rl/advantage_labeling/recap/process/compute_returns.py
+index f890889e..cc405e01 100644
+--- a/examples/offline_rl/advantage_labeling/recap/process/compute_returns.py
++++ b/examples/offline_rl/advantage_labeling/recap/process/compute_returns.py
+@@ -48,7 +48,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
+ logger = logging.getLogger(__name__)
+ 
+ # Columns needed for computation (tiny — no images)
+-_READ_COLUMNS = ["episode_index", "frame_index", "is_success", "task_index", "task"]
++_READ_COLUMNS = [
++    "episode_index",
++    "frame_index",
++    "is_success",
++    "intervention",
++    "insertions_done",
++    "task_index",
++    "task",
++]
++
++
++def _unwrap_flag(value, name: str, pq_file: str) -> bool:
++    """Read a LeRobot bool feature that may be stored as a one-element list."""
++    # LeRobot bool features commonly have shape (1,), so Arrow gives [False],
++    # whose Python truth value is True. Unwrap the scalar explicitly.
++    flag = np.asarray(value)
++    if flag.size != 1 or flag.reshape(-1)[0] not in (True, False, 0, 1):
++        raise ValueError(f"Invalid {name} flag in {pq_file}: {flag!r}")
++    return bool(flag.reshape(-1)[0])
+ 
+ 
+ def compute_returns_for_episode(
+@@ -56,6 +74,8 @@ def compute_returns_for_episode(
+     is_success: bool,
+     gamma: float,
+     failure_reward: float,
++    intervention: np.ndarray | None = None,
++    takeover_penalty: float = 0.0,
+ ) -> tuple[np.ndarray, np.ndarray]:
+     """Compute returns and rewards for a single episode.
+ 
+@@ -63,6 +83,9 @@ def compute_returns_for_episode(
+     - Each step reward = -1
+     - Success at episode end: last step reward = 0
+     - Failure at episode end: last step reward = failure_reward
++    - Optional takeover cost (Evo-RL): the last policy-controlled step before
++      each human takeover onset gets an extra ``-takeover_penalty``, i.e.
++      ``r_t = -1 - C_int * 1[m_t = 0, m_{t+1} = 1]``.
+ 
+     Returns are computed via backward iteration: G_t = r_t + gamma * G_{t+1}
+ 
+@@ -71,11 +94,21 @@ def compute_returns_for_episode(
+         is_success: Whether episode was successful
+         gamma: Discount factor (default 1.0 for undiscounted)
+         failure_reward: Penalty for failure (must be specified in config)
++        intervention: Optional per-step human-control flags (length T)
++        takeover_penalty: Extra cost C_int >= 0 charged before each takeover
+ 
+     Returns:
+         Tuple of (returns array, rewards array) for all steps
+     """
++    if takeover_penalty < 0:
++        raise ValueError(f"takeover_penalty must be >= 0, got {takeover_penalty}")
+     rewards = np.full(episode_length, -1.0, dtype=np.float32)
++    if intervention is not None and takeover_penalty > 0:
++        human = np.asarray(intervention, dtype=bool)
++        if human.shape != (episode_length,):
++            raise ValueError("intervention flags must match the episode length.")
++        onsets = np.flatnonzero(~human[:-1] & human[1:])
++        rewards[onsets] -= takeover_penalty
+     rewards[-1] = 0.0 if is_success else failure_reward
+ 
+     returns = np.zeros(episode_length, dtype=np.float32)
+@@ -114,6 +147,9 @@ def _process_single_parquet(
+     gamma: float,
+     failure_reward: float,
+     tasks: dict[int, str],
++    takeover_penalty: float = 0.0,
++    stage_total: int | None = None,
++    stage_failure_cost: float = 0.0,
+ ) -> pa.Table | None:
+     """Process a single parquet file: read only metadata columns, compute returns.
+ 
+@@ -155,6 +191,23 @@ def _process_single_parquet(
+             "to correctly distinguish successful and failed episodes."
+         )
+ 
++    intervention_col = None
++    if takeover_penalty > 0 and "intervention" in col_names:
++        intervention_col = np.array(
++            [
++                _unwrap_flag(value, "intervention", pq_file)
++                for value in table.column("intervention").to_pylist()
++            ],
++            dtype=bool,
++        )
++
++    stage_col = None
++    if stage_total and stage_failure_cost > 0 and "insertions_done" in col_names:
++        stage_col = [
++            int(np.asarray(value).reshape(-1)[0])
++            for value in table.column("insertions_done").to_pylist()
++        ]
++
+     returns_arr = np.empty(n, dtype=np.float32)
+     rewards_arr = np.empty(n, dtype=np.float32)
+ 
+@@ -164,13 +217,23 @@ def _process_single_parquet(
+         if dataset_type == "sft":
+             is_success = True
+         else:
+-            is_success = bool(is_success_col[ep_end - 1])
++            is_success = _unwrap_flag(is_success_col[ep_end - 1], "is_success", pq_file)
++
++        episode_failure_reward = failure_reward
++        if stage_col is not None and not is_success:
++            # Multi-stage task: failing with more stages left is worse.
++            remaining = max(0, stage_total - stage_col[ep_end - 1])
++            episode_failure_reward = failure_reward - stage_failure_cost * remaining
+ 
+         ep_returns, ep_rewards = compute_returns_for_episode(
+             episode_length=ep_length,
+             is_success=is_success,
+             gamma=gamma,
+-            failure_reward=failure_reward,
++            failure_reward=episode_failure_reward,
++            intervention=(
++                None if intervention_col is None else intervention_col[ep_start:ep_end]
++            ),
++            takeover_penalty=takeover_penalty,
+         )
+         returns_arr[ep_start:ep_end] = ep_returns
+         rewards_arr[ep_start:ep_end] = ep_rewards
+@@ -203,6 +266,9 @@ def process_dataset(
+     failure_reward: float,
+     num_workers: int = 8,
+     tag: str | None = None,
++    takeover_penalty: float = 0.0,
++    stage_total: int | None = None,
++    stage_failure_cost: float = 0.0,
+ ) -> dict:
+     """Process a LeRobot dataset and compute return/reward/prompt.
+ 
+@@ -218,13 +284,21 @@ def process_dataset(
+         failure_reward: Penalty for failed episodes
+         num_workers: Number of parallel workers for parquet processing
+         tag: Optional tag for the sidecar filename
++        takeover_penalty: Extra cost before each human takeover onset (needs
++            an ``intervention`` column; 0 keeps the original RECAP reward)
++        stage_total: Number of task stages; with ``stage_failure_cost`` and an
++            ``insertions_done`` column, a failure's terminal reward becomes
++            ``failure_reward - stage_failure_cost * (stage_total - done)``
++        stage_failure_cost: Extra failure cost per unfinished stage
+ 
+     Returns:
+         Statistics dict with return/reward stats
+     """
+     logger.info(f"Processing dataset: {dataset_path}")
+     logger.info(
+-        f"  Type: {dataset_type}, Gamma: {gamma}, Failure reward: {failure_reward}"
++        f"  Type: {dataset_type}, Gamma: {gamma}, Failure reward: {failure_reward}, "
++        f"Takeover penalty: {takeover_penalty}, "
++        f"Stage failure cost: {stage_failure_cost} x unfinished of {stage_total}"
+     )
+ 
+     if output_path is None:
+@@ -260,7 +334,14 @@ def process_dataset(
+     if effective_workers <= 1:
+         for pq_file in tqdm(parquet_files, desc="Processing parquet files"):
+             tbl = _process_single_parquet(
+-                pq_file, dataset_type, gamma, failure_reward, tasks
++                pq_file,
++                dataset_type,
++                gamma,
++                failure_reward,
++                tasks,
++                takeover_penalty,
++                stage_total,
++                stage_failure_cost,
+             )
+             if tbl is not None:
+                 result_tables.append(tbl)
+@@ -276,6 +357,9 @@ def process_dataset(
+                     gamma,
+                     failure_reward,
+                     tasks,
++                    takeover_penalty,
++                    stage_total,
++                    stage_failure_cost,
+                 )
+                 futures[fut] = pq_file
+ 
+@@ -399,6 +483,9 @@ def compute_returns(cfg: DictConfig) -> None:
+             "This is the reward assigned to the last step of failed episodes "
+             "(e.g., failure_reward=-300.0)."
+         )
++    default_takeover_penalty = float(cfg.data.get("takeover_penalty", 0.0))
++    stage_total = cfg.data.get("stage_total", None)
++    stage_failure_cost = float(cfg.data.get("stage_failure_cost", 0.0))
+     num_workers = cfg.data.get("num_workers", 8)
+     tag = cfg.data.get("tag", None)
+ 
+@@ -429,6 +516,9 @@ def compute_returns(cfg: DictConfig) -> None:
+                     "failure_reward": entry.get(
+                         "failure_reward", default_failure_reward
+                     ),
++                    "takeover_penalty": float(
++                        entry.get("takeover_penalty", default_takeover_penalty)
++                    ),
+                 }
+             )
+     else:
+@@ -452,6 +542,7 @@ def compute_returns(cfg: DictConfig) -> None:
+                 "dataset_type": default_type,
+                 "gamma": default_gamma,
+                 "failure_reward": default_failure_reward,
++                "takeover_penalty": default_takeover_penalty,
+             }
+         )
+ 
+@@ -479,6 +570,9 @@ def compute_returns(cfg: DictConfig) -> None:
+             failure_reward=ds_config["failure_reward"],
+             num_workers=num_workers,
+             tag=tag,
++            takeover_penalty=ds_config["takeover_penalty"],
++            stage_total=stage_total,
++            stage_failure_cost=stage_failure_cost,
+         )
+         all_stats.append(
+             {
+diff --git a/rlinf/data/datasets/recap/cfg_model.py b/rlinf/data/datasets/recap/cfg_model.py
+index d12820ed..405cc8d3 100644
+--- a/rlinf/data/datasets/recap/cfg_model.py
++++ b/rlinf/data/datasets/recap/cfg_model.py
+@@ -20,6 +20,7 @@ import dataclasses
+ import logging
+ from typing import Any, Iterator
+ 
++import numpy as np
+ import torch
+ 
+ from rlinf.models.embodiment.openpi_cfg.openpi_cfg_action_model import (
+@@ -140,7 +141,7 @@ class CFGDataLoaderImpl(BaseDataLoaderImpl):
+ 
+             advantage = batch["advantage"]
+             if not isinstance(advantage, torch.Tensor):
+-                advantage = torch.tensor(advantage, dtype=torch.bool)
++                advantage = torch.from_numpy(np.asarray(advantage, dtype=bool))
+ 
+             yield observation, actions, advantage
+ 
+diff --git a/rlinf/data/datasets/recap/value_dataset.py b/rlinf/data/datasets/recap/value_dataset.py
+index b0691515..3efd80d8 100644
+--- a/rlinf/data/datasets/recap/value_dataset.py
++++ b/rlinf/data/datasets/recap/value_dataset.py
+@@ -18,6 +18,7 @@ from __future__ import annotations
+ 
+ import json
+ import logging
++import os
+ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import Any, Iterator, Optional
+@@ -51,6 +52,14 @@ _MODEL_TYPE_MAP = {
+ }
+ 
+ _REPACK_KEYS = {
++    "piper": {
++        "observation/image": "observation.images.cam_high",
++        "observation/extra_view_image-0": "observation.images.cam_left_wrist",
++        "observation/extra_view_image-1": "observation.images.cam_right_wrist",
++        "observation/state": "observation.state",
++        "actions": "action",
++        "prompt": "prompt",
++    },
+     "libero": {
+         "observation/image": "image",
+         "observation/wrist_image": "wrist_image",
+@@ -245,6 +254,8 @@ class ValueDataset(Dataset):
+             root=local_path,
+             delta_timestamps=delta_timestamps,
+             download_videos=False,
++            # e.g. "pyav" on hosts whose torchcodec cannot load FFmpeg.
++            video_backend=os.environ.get("RECAP_VIDEO_BACKEND") or None,
+         )
+         self._base.hf_dataset.set_transform(decode_image_struct_batch)
+ 
+@@ -304,6 +315,9 @@ class ValueDataset(Dataset):
+         model_type_lower = model_type.lower()
+         model_type_enum = _MODEL_TYPE_MAP[model_type_lower]
+         robot = robot_type.lower()
++        roi = robot == "piper_roi"
++        if roi:
++            robot = "piper"
+ 
+         transforms_list = []
+         repack_keys = _REPACK_KEYS.get(robot)
+@@ -314,7 +328,19 @@ class ValueDataset(Dataset):
+             )
+         transforms_list.append(_openpi_transforms.RepackTransform(repack_keys))
+ 
+-        if robot in ("libero", "libero_v2"):
++        if robot == "piper":
++            from rlinf.models.embodiment.openpi.policies.piper_joint_policy import (
++                PiperJointInputs,
++            )
++
++            transforms_list.append(
++                PiperJointInputs(
++                    action_dim=action_dim,
++                    model_type=model_type_enum,
++                    right_wrist_roi=roi,
++                )
++            )
++        elif robot in ("libero", "libero_v2"):
+             transforms_list.append(
+                 libero_policy.LiberoInputs(model_type=model_type_enum)
+             )
+diff --git a/rlinf/data/process/advantage.py b/rlinf/data/process/advantage.py
+index 35a5e13a..28640b5b 100644
+--- a/rlinf/data/process/advantage.py
++++ b/rlinf/data/process/advantage.py
+@@ -66,4 +66,156 @@ def apply_boolean_label(continuous, threshold: float, *, inclusive: bool = True)
+     return continuous > threshold
+ 
+ 
+-__all__ = ["quantile_threshold", "apply_boolean_label"]
++__all__ = [
++    "quantile_threshold",
++    "apply_boolean_label",
++    "value_binned_thresholds",
++    "apply_value_binned_label",
++]
++
++
++def value_binned_thresholds(scores, values, positive_fraction: float, bins: int):
++    """Per-progress-bin thresholds: top ``positive_fraction`` of each value bin.
++
++    A single global threshold compares frames from very different task
++    progress, so stages whose advantage spread is small get swamped. Splitting
++    frames into ``bins`` equal-count bins of the value prediction needs no
++    stage labels or insertion count: the value model already orders frames by
++    remaining progress.
++
++    Args:
++        scores: 1-D continuous advantage scores to fit on.
++        values: Value prediction per score (same length).
++        positive_fraction: Fraction of top scores positive inside each bin.
++        bins: Number of value bins (>= 2).
++
++    Returns:
++        ``(edges, thresholds)``: interior bin edges (at most ``bins - 1``,
++        duplicates removed) and one threshold per resulting bin.
++    """
++    if bins < 2:
++        raise ValueError(f"bins must be at least 2, got {bins}")
++    scores = np.asarray(scores, dtype=np.float64)
++    values = np.asarray(values, dtype=np.float64)
++    if scores.shape != values.shape or scores.ndim != 1 or scores.size == 0:
++        raise ValueError("scores and values must be equal-length non-empty 1-D.")
++    edges = np.unique(np.quantile(values, np.linspace(0.0, 1.0, bins + 1)[1:-1]))
++    assignment = np.searchsorted(edges, values, side="right")
++    # Tied values can leave a bin empty; it then uses the overall threshold.
++    pools = [scores[assignment == index] for index in range(len(edges) + 1)]
++    thresholds = np.array(
++        [
++            quantile_threshold(pool if pool.size else scores, positive_fraction)
++            for pool in pools
++        ]
++    )
++    return edges, thresholds
++
++
++def apply_value_binned_label(continuous, values, edges, thresholds):
++    """Boolean label (RECAP ``>=``) using the threshold of each frame's value bin."""
++    assignment = np.searchsorted(
++        np.asarray(edges), np.asarray(values, dtype=np.float64), side="right"
++    )
++    return np.asarray(continuous, dtype=np.float64) >= np.asarray(thresholds)[assignment]
++
++
++def smoothing_window(seconds: float, fps: float) -> int:
++    """Odd number of frames covering ``seconds`` at ``fps`` (1 disables)."""
++    if seconds <= 0:
++        return 1
++    frames = max(1, int(round(seconds * fps)))
++    return frames if frames % 2 else frames + 1
++
++
++def smoothed_td_advantages(
++    episode_index,
++    returns,
++    values,
++    *,
++    lookahead: int,
++    window: int,
++    return_min: float,
++    return_max: float,
++):
++    """N-step RECAP advantages from values averaged over ``window`` frames.
++
++    Recomputes ``A_t = norm(R_t - R_{t+N}) + V_s(o_{t+N}) - V_s(o_t)`` for
++    ``gamma = 1``, where ``V_s`` is a centred moving average of the per-frame
++    value prediction inside each episode (edge-padded, never across episodes)
++    and ``V_s(o_{t+N}) = 0``, ``R_{t+N} = 0`` past the episode end. With
++    ``window = 1`` this equals the unsmoothed RECAP formula exactly.
++
++    Frame-to-frame value noise is much larger than the per-step reward over a
++    short lookahead, so smoothing keeps the label from flipping between
++    neighbouring frames while preserving the episode-level trend.
++
++    Args:
++        episode_index: Episode id per row; rows of one episode must be
++            contiguous and in frame order.
++        returns: Raw (unnormalised) return ``R_t`` per row.
++        values: Value prediction ``V(o_t)`` per row (normalised scale).
++        lookahead: N, in frames.
++        window: Odd moving-average width in frames (1 disables smoothing).
++        return_min: Global return minimum used for normalisation.
++        return_max: Global return maximum used for normalisation.
++
++    Returns:
++        ``(advantage, value_current, value_next, reward_sum)`` arrays.
++    """
++    if window < 1 or window % 2 == 0:
++        raise ValueError(f"window must be a positive odd integer, got {window}")
++    episode_index = np.asarray(episode_index)
++    returns = np.asarray(returns, dtype=np.float64)
++    values = np.asarray(values, dtype=np.float64)
++    span = return_max - return_min
++    out = [np.empty(len(values)) for _ in range(4)]
++    starts = np.flatnonzero(np.r_[True, episode_index[1:] != episode_index[:-1]])
++    for start, end in zip(starts, np.r_[starts[1:], len(values)]):
++        v, r = values[start:end], returns[start:end]
++        if window > 1:
++            half = window // 2
++            v = np.convolve(
++                np.pad(v, half, mode="edge"), np.ones(window) / window, "valid"
++            )
++        n = end - start
++        nxt = np.arange(n) + lookahead
++        past_end = nxt >= n
++        nxt = np.minimum(nxt, n - 1)
++        v_next = np.where(past_end, 0.0, v[nxt])
++        r_next = np.where(past_end, 0.0, r[nxt])
++        # Same normalisation as compute_advantages.normalize().
++        reward_sum = (r - r_next - return_min) / span - 1.0
++        out[0][start:end] = reward_sum + v_next - v
++        out[1][start:end], out[2][start:end], out[3][start:end] = v, v_next, reward_sum
++    return tuple(out)
++
++
++def threshold_scores(scores_by_dataset, dataset_types, allowed_types=None):
++    """Concatenate the scores the advantage threshold is computed on.
++
++    Args:
++        scores_by_dataset: One 1-D score array per dataset.
++        dataset_types: The dataset ``type`` (e.g. ``"sft"``, ``"rollout"``) of
++            each entry, in the same order.
++        allowed_types: Types whose frames set the threshold; ``None`` uses all
++            datasets (the original behaviour). Every dataset is still labelled
++            with the resulting threshold.
++
++    Returns:
++        The concatenated scores.
++    """
++    if len(scores_by_dataset) != len(dataset_types):
++        raise ValueError("One dataset type is required per score array.")
++    if allowed_types is None:
++        selected = list(scores_by_dataset)
++    else:
++        allowed = {str(t).lower() for t in allowed_types}
++        selected = [
++            scores
++            for scores, kind in zip(scores_by_dataset, dataset_types)
++            if str(kind).lower() in allowed
++        ]
++        if not selected:
++            raise ValueError(f"No dataset of types {sorted(allowed)} to threshold on.")
++    return np.concatenate([np.asarray(s, dtype=np.float64) for s in selected])
+diff --git a/rlinf/models/embodiment/openpi_cfg/__init__.py b/rlinf/models/embodiment/openpi_cfg/__init__.py
+index 57281120..b28bdc53 100644
+--- a/rlinf/models/embodiment/openpi_cfg/__init__.py
++++ b/rlinf/models/embodiment/openpi_cfg/__init__.py
+@@ -18,6 +18,14 @@ from omegaconf import DictConfig
+ 
+ 
+ def get_model(cfg: DictConfig, torch_dtype=None):
++    if getattr(cfg.openpi, "config_name", None) in (
++        "pi05_piper_joint",
++        "pi05_piper_joint_roi",
++    ):
++        from rlinf.recap_piper.policy import load_piper_cfg_model
++
++        return load_piper_cfg_model(cfg)
++
+     import glob
+ 
+     import openpi.shared.download as download
+diff --git a/rlinf/models/embodiment/openpi_cfg/openpi_cfg_action_model.py b/rlinf/models/embodiment/openpi_cfg/openpi_cfg_action_model.py
+index 60ddf9dc..684178b8 100644
+--- a/rlinf/models/embodiment/openpi_cfg/openpi_cfg_action_model.py
++++ b/rlinf/models/embodiment/openpi_cfg/openpi_cfg_action_model.py
+@@ -13,6 +13,7 @@
+ # limitations under the License.
+ 
+ from collections.abc import Sequence
++from contextlib import nullcontext
+ from dataclasses import dataclass
+ from typing import Any, Literal, TypeVar
+ 
+@@ -25,11 +26,11 @@ from flax import struct
+ from openpi import transforms as _transforms
+ from openpi.models import model as _model
+ from openpi.models.model import Observation as Obs
+-from openpi.models.pi0_config import Pi0Config
+ from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
+ from torch.utils._pytree import tree_map
+ 
+ from rlinf.models.embodiment.base_policy import BasePolicy
++from rlinf.models.embodiment.openpi.roi_config import ImagePi0Config as Pi0Config
+ 
+ ArrayT = TypeVar("ArrayT", bound=torch.Tensor | np.ndarray)
+ 
+@@ -245,6 +246,19 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
+             path_parts = name.split(".")
+             setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
+ 
++    def _embed_suffix_mixed_precision(self, state, noisy_actions, timestep):
++        """Match projection precision while preserving an outer FSDP autocast."""
++        dtype = self.action_in_proj.weight.dtype
++        context = (
++            torch.autocast(device_type=noisy_actions.device.type, dtype=dtype)
++            if dtype in (torch.bfloat16, torch.float16)
++            else nullcontext()
++        )
++        with context:
++            return PI0Pytorch.embed_suffix(self, state, noisy_actions, timestep)
++
++    embed_suffix = _embed_suffix_mixed_precision
++
+     def set_global_step(self, global_step):
+         self.global_step = global_step
+ 
+@@ -724,26 +738,38 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
+             state,
+         ) = self._preprocess_observation(observation, train=False)
+ 
+-        prefix_embs_uncond, prefix_pad_masks_uncond, prefix_att_masks_uncond = (
+-            self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+-        )
+-        prefix_att_2d_masks_uncond = make_att_2d_masks(
+-            prefix_pad_masks_uncond, prefix_att_masks_uncond
+-        )
+-        prefix_position_ids_uncond = torch.cumsum(prefix_pad_masks_uncond, dim=1) - 1
+-        prefix_att_2d_masks_4d_uncond = self._prepare_attention_masks_4d(
+-            prefix_att_2d_masks_uncond
++        # With guidance 1.0 the unconditional term has weight exactly 0, so
++        # the guided velocity equals the conditional one bit for bit; skip the
++        # unconditional prefix and denoising (about half of the inference).
++        skip_uncond = (
++            guidance_type != "no_guide" and self.config.cfgrl_guidance_scale == 1.0
+         )
+ 
+         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"
+ 
+-        _, past_key_values_uncond = self.paligemma_with_expert.forward(
+-            attention_mask=prefix_att_2d_masks_4d_uncond,
+-            position_ids=prefix_position_ids_uncond,
+-            past_key_values=None,
+-            inputs_embeds=[prefix_embs_uncond, None],
+-            use_cache=True,
+-        )
++        if skip_uncond:
++            prefix_pad_masks_uncond = None
++            past_key_values_uncond = None
++        else:
++            prefix_embs_uncond, prefix_pad_masks_uncond, prefix_att_masks_uncond = (
++                self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
++            )
++            prefix_att_2d_masks_uncond = make_att_2d_masks(
++                prefix_pad_masks_uncond, prefix_att_masks_uncond
++            )
++            prefix_position_ids_uncond = (
++                torch.cumsum(prefix_pad_masks_uncond, dim=1) - 1
++            )
++            prefix_att_2d_masks_4d_uncond = self._prepare_attention_masks_4d(
++                prefix_att_2d_masks_uncond
++            )
++            _, past_key_values_uncond = self.paligemma_with_expert.forward(
++                attention_mask=prefix_att_2d_masks_4d_uncond,
++                position_ids=prefix_position_ids_uncond,
++                past_key_values=None,
++                inputs_embeds=[prefix_embs_uncond, None],
++                use_cache=True,
++            )
+ 
+         if guidance_type != "no_guide":
+             if guidance_type == "positive":
+@@ -787,6 +813,17 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
+         time = torch.tensor(1.0, dtype=torch.float32, device=device)
+         while time >= -dt / 2:
+             expanded_time = time.expand(bsize)
++            if skip_uncond:
++                v_t = self.denoise_step(
++                    state,
++                    prefix_pad_masks_cond,
++                    past_key_values_cond,
++                    x_t,
++                    expanded_time,
++                )
++                x_t = x_t + dt * v_t
++                time += dt
++                continue
+             v_t_uncond = self.denoise_step(
+                 state,
+                 prefix_pad_masks_uncond,
+@@ -873,8 +910,21 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
+ 
+     def _preprocess_observation(self, observation, *, train=True):
+         """Helper method to preprocess observation."""
++        # Image augmentations (notably grid_sample) require FP32 even when
++        # FSDP has cast the surrounding model inputs to BF16.
++        observation = observation.replace(
++            images={key: value.float() for key, value in observation.images.items()}
++        )
+         part_observation = _preprocessing.preprocess_observation_pytorch(
+-            observation, train=train
++            observation,
++            train=train,
++            image_keys=tuple(
++                getattr(
++                    getattr(self, "config", None),
++                    "image_keys",
++                    _preprocessing.IMAGE_KEYS,
++                )
++            ),
+         )
+         setattr(
+             part_observation,
+diff --git a/rlinf/models/embodiment/value_model/recap/checkpoint_utils.py b/rlinf/models/embodiment/value_model/recap/checkpoint_utils.py
+index 87a09123..e9ad3bfd 100644
+--- a/rlinf/models/embodiment/value_model/recap/checkpoint_utils.py
++++ b/rlinf/models/embodiment/value_model/recap/checkpoint_utils.py
+@@ -162,7 +162,20 @@ def build_input_transforms(
+ 
+     input_transforms = []
+ 
+-    if env_type == "libero":
++    if env_type in ("piper", "piper_roi"):
++        from rlinf.models.embodiment.openpi.policies.piper_joint_policy import (
++            PiperJointInputs,
++        )
++
++        input_transforms.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))
++        input_transforms.append(
++            PiperJointInputs(
++                action_dim=action_dim,
++                model_type=model_type_enum,
++                right_wrist_roi=env_type == "piper_roi",
++            )
++        )
++    elif env_type == "libero":
+         input_transforms.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))
+         input_transforms.append(libero_policy.LiberoInputs(model_type=model_type_enum))
+ 
+diff --git a/rlinf/models/embodiment/value_model/recap/data_collator.py b/rlinf/models/embodiment/value_model/recap/data_collator.py
+index 0306681a..09e9564f 100644
+--- a/rlinf/models/embodiment/value_model/recap/data_collator.py
++++ b/rlinf/models/embodiment/value_model/recap/data_collator.py
+@@ -60,7 +60,8 @@ def stack_tensors(list_of_dicts: list[dict[str, Any]]) -> dict[str, torch.Tensor
+                 if template_tensor is None:
+                     template_tensor = v
+             elif isinstance(v, (np.bool_, bool)):
+-                t = torch.tensor(v, dtype=torch.bool)
++                # NumPy >= 2.4 bools are not accepted by torch.tensor directly.
++                t = torch.tensor(bool(v), dtype=torch.bool)
+                 tensors.append(t)
+                 if template_tensor is None:
+                     template_tensor = t
+@@ -237,7 +238,7 @@ class ValueDataCollator(DataCollatorMixin):
+             )
+ 
+         if dones_list[0] is not None:
+-            batch["dones"] = torch.tensor(dones_list, dtype=torch.bool)
++            batch["dones"] = torch.from_numpy(np.asarray(dones_list, dtype=bool))
+ 
+         return batch
+ 
+diff --git a/rlinf/models/embodiment/value_model/recap/modeling_critic.py b/rlinf/models/embodiment/value_model/recap/modeling_critic.py
+index 39d058d0..8e720ea9 100644
+--- a/rlinf/models/embodiment/value_model/recap/modeling_critic.py
++++ b/rlinf/models/embodiment/value_model/recap/modeling_critic.py
+@@ -782,7 +782,9 @@ class ValueCriticModel(nn.Module):
+             if cam_name in input_masks:
+                 mask = input_masks[cam_name]
+                 if isinstance(mask, (bool, np.bool_)):
+-                    image_masks_batch[cam_name] = torch.tensor([mask], dtype=torch.bool)
++                    image_masks_batch[cam_name] = torch.tensor(
++                        [bool(mask)], dtype=torch.bool
++                    )
+                 elif isinstance(mask, torch.Tensor):
+                     image_masks_batch[cam_name] = (
+                         mask.unsqueeze(0) if mask.dim() == 0 else mask
+@@ -889,7 +891,9 @@ class ValueCriticModel(nn.Module):
+             if cam_name in input_masks:
+                 mask = input_masks[cam_name]
+                 if isinstance(mask, (bool, np.bool_)):
+-                    image_masks_batch[cam_name] = torch.tensor([mask], dtype=torch.bool)
++                    image_masks_batch[cam_name] = torch.tensor(
++                        [bool(mask)], dtype=torch.bool
++                    )
+                 elif isinstance(mask, torch.Tensor):
+                     image_masks_batch[cam_name] = (
+                         mask.unsqueeze(0) if mask.dim() == 0 else mask
+diff --git a/rlinf/workers/sft/fsdp_cfg_worker.py b/rlinf/workers/sft/fsdp_cfg_worker.py
+index 60159439..fdc2e9c5 100644
+--- a/rlinf/workers/sft/fsdp_cfg_worker.py
++++ b/rlinf/workers/sft/fsdp_cfg_worker.py
+@@ -46,6 +46,22 @@ from rlinf.utils.placement import HybridComponentPlacement
+ from rlinf.utils.pytree import register_pytree_dataclasses
+ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+ 
++
++def _python_bools(sample: Any) -> Any:
++    """Replace NumPy bool scalars, which torch 2.6 rejects under NumPy >= 2.4."""
++    if isinstance(sample, np.bool_):
++        return bool(sample)
++    if isinstance(sample, dict):
++        return {key: _python_bools(value) for key, value in sample.items()}
++    if isinstance(sample, (list, tuple)):
++        return type(sample)(_python_bools(value) for value in sample)
++    return sample
++
++
++def _collate(batch: list) -> Any:
++    return torch.utils.data.default_collate([_python_bools(s) for s in batch])
++
++
+ # Suppress libdav1d/ffmpeg verbose logging
+ try:
+     import av
+@@ -92,6 +108,19 @@ class FSDPCfgWorker(FSDPSftWorker):
+         self._data_epoch = 0
+         self._data_iter_offset = 0
+ 
++    def model_provider_func(self):
++        model = super().model_provider_func()
++        if self.cfg.actor.model.get("recap_full_finetune", False):
++            # Whole-model finetuning: keep FP32 master weights (BF16 cannot
++            # represent lr-sized updates of most weights); compute runs in
++            # BF16 under fsdp_config.amp_autocast.
++            if not self.cfg.actor.fsdp_config.amp_autocast.get("enabled", False):
++                raise ValueError(
++                    "recap_full_finetune needs actor.fsdp_config.amp_autocast.enabled."
++                )
++            model = model.float()
++        return model
++
+     @staticmethod
+     def _load_advantages_lookup(
+         data_path: str,
+@@ -158,6 +187,7 @@ class FSDPCfgWorker(FSDPSftWorker):
+             model_path=self.cfg.actor.model.model_path,
+             batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+             repo_id=first_path,
++            data_kwargs=self.cfg.actor.model.get("openpi_data", None),
+         )
+         data_config = config.data.create(config.assets_dirs, config.model)
+ 
+@@ -184,9 +214,12 @@ class FSDPCfgWorker(FSDPSftWorker):
+                     ]
+                     for key in data_config.action_sequence_keys
+                 },
++                # e.g. "pyav" on hosts whose torchcodec cannot load FFmpeg.
++                video_backend=os.environ.get("RECAP_VIDEO_BACKEND") or None,
+             )
+ 
+             base_dataset.hf_dataset = cast_image_features(base_dataset.hf_dataset)
++            lerobot_base = base_dataset
+ 
+             if episodes is not None:
+                 self._fix_episode_data_index(base_dataset, episodes)
+@@ -211,8 +244,26 @@ class FSDPCfgWorker(FSDPSftWorker):
+                 base_dataset, transforms_list
+             )
+ 
+-            advantages_lookup = self._load_advantages_lookup(data_path, advantage_tag)
+-            if self._rank == 0:
++            if data_cfg.get("plain_sft", False):
++                # Plain SFT baseline: every frame trains the unconditional
++                # branch with the original prompt; no advantage file is used.
++                hf = lerobot_base.hf_dataset
++                advantages_lookup = dict.fromkeys(
++                    zip(
++                        (int(i) for i in hf["episode_index"]),
++                        (int(i) for i in hf["frame_index"]),
++                    ),
++                    False,
++                )
++                if self._rank == 0:
++                    self.log_info(
++                        f"plain_sft: {len(advantages_lookup)} unconditional frames"
++                    )
++            else:
++                advantages_lookup = self._load_advantages_lookup(
++                    data_path, advantage_tag
++                )
++            if self._rank == 0 and not data_cfg.get("plain_sft", False):
+                 adv_filename = (
+                     f"advantages_{advantage_tag}.parquet"
+                     if advantage_tag
+@@ -276,6 +327,21 @@ class FSDPCfgWorker(FSDPSftWorker):
+ 
+         return model_transforms
+ 
++    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
++        """Save Piper deployment provenance next to the complete CFG weights."""
++        super().save_checkpoint(save_path, step)
++        if (
++            self._rank == 0
++            and self.cfg.actor.model.openpi.config_name == "pi05_piper_joint"
++        ):
++            from rlinf.recap_piper.data import atomic_json
++            from rlinf.recap_piper.policy import policy_provenance
++
++            atomic_json(
++                Path(save_path) / "piper_recap_policy.json",
++                policy_provenance(self.cfg.actor.model),
++            )
++
+     def _fix_episode_data_index(self, dataset: Any, episodes: list) -> None:
+         """Fix LeRobotDataset episode_data_index when using specific episodes.
+ 
+@@ -330,6 +396,7 @@ class FSDPCfgWorker(FSDPSftWorker):
+             shuffle=(sampler is None and shuffle),
+             sampler=sampler,
+             drop_last=True,
++            collate_fn=_collate,
+             num_workers=num_workers,
+             pin_memory=True,
+             prefetch_factor=4 if num_workers > 0 else None,
+@@ -363,6 +430,11 @@ class FSDPCfgWorker(FSDPSftWorker):
+             metrics = {}
+             avg_loss = 0.0
+ 
++            if os.environ.get("RECAP_DEBUG_ANOMALY"):
++                # Names the forward op behind a failing backward (slow; debug only).
++                torch.autograd.set_detect_anomaly(True)
++                self._report_detached_fsdp_params("before step")
++
+             for idx in range(self.gradient_accumulation):
+                 backward_ctx = self.before_micro_batch(
+                     self.model,
+@@ -412,6 +484,15 @@ class FSDPCfgWorker(FSDPSftWorker):
+ 
+             grad_norm, lr_list = self.optimizer_step()
+             self.optimizer.zero_grad(set_to_none=True)
++            restored = self._restore_fsdp_param_views()
++            if restored and not getattr(self, "_logged_view_restore", False):
++                self._logged_view_restore = True
++                self.log_info(
++                    f"Re-registered parameters of {restored} frozen FSDP unit(s) "
++                    "after the optimizer step."
++                )
++            if os.environ.get("RECAP_DEBUG_ANOMALY"):
++                self._report_detached_fsdp_params("after step")
+ 
+             lr_value = (
+                 lr_list[0] if len(lr_list) > 0 else self.optimizer.param_groups[0]["lr"]
+@@ -546,6 +627,62 @@ class FSDPCfgWorker(FSDPSftWorker):
+ 
+             return train_metrics
+ 
++    def _restore_fsdp_param_views(self) -> int:
++        """Re-register original parameters that FSDP left as tensor views.
++
++        With ``use_orig_params``, FSDP swaps a unit's parameters for plain
++        tensor views during forward and restores them in its post-backward
++        hook. A unit whose parameters are all frozen (the root unit, holding
++        the SigLIP encoder when only the action expert trains) never runs that
++        hook, so the next forward fails with "Cannot writeback when the
++        parameter shape changes". This makes the call FSDP's post-backward
++        makes; the data stays in place.
++        """
++        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
++
++        restored = 0
++        for module in FSDP.fsdp_modules(self.model):
++            handle = getattr(module, "_handle", None)
++            if handle is None or handle.flat_param._params is None:
++                continue
++            flat = handle.flat_param
++            if any(
++                getattr(info.module, info.param_name, None) is not param
++                for param, info in zip(flat._params, flat._param_infos)
++            ):
++                handle._use_sharded_views()
++                restored += 1
++        return restored
++
++    def _report_detached_fsdp_params(self, when: str) -> None:
++        """Log original parameters no longer viewing their FSDP flat parameter."""
++        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
++
++        if self._rank != 0:
++            return
++        detached = []
++        for module in FSDP.fsdp_modules(self.model):
++            handle = getattr(module, "_handle", None)
++            if handle is None or handle.flat_param._params is None:
++                continue
++            flat = handle.flat_param
++            storage = flat.untyped_storage().data_ptr()
++            for fqn, param, info in zip(flat._fqns, flat._params, flat._param_infos):
++                current = getattr(info.module, info.param_name, None)
++                if current is not param:
++                    detached.append(
++                        f"{fqn}: module attr replaced by {type(current).__name__} "
++                        f"{tuple(getattr(current, 'shape', ()))}"
++                    )
++                elif param.untyped_storage().data_ptr() != storage:
++                    detached.append(
++                        f"{fqn} {tuple(param.shape)} {param.dtype} "
++                        f"requires_grad={param.requires_grad}"
++                    )
++        self.log_info(
++            f"[fsdp-debug] {when}: {len(detached)} detached params: {detached[:20]}"
++        )
++
+     def set_global_step(self, global_step):
+         self.global_step = global_step
+ 

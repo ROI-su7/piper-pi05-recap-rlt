@@ -1,0 +1,15 @@
+name: Offline source and takeover checks
+on: [push, pull_request]
+jobs:
+  source-and-hardware-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install numpy pytest ruff
+      - run: python scripts/bootstrap.py --verify-only
+      - run: python -m ruff check scripts tests conftest.py
+      - run: python -m ruff format --check scripts tests conftest.py
+      - run: python -m pytest -c pytest.ini -q tests/test_release.py robot/cobot_magic/Piper_ros_private-ros-noetic/src/piper/test

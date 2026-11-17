@@ -1,0 +1,644 @@
+diff --git a/packages/openpi-client/src/openpi_client/action_chunk_broker.py b/packages/openpi-client/src/openpi_client/action_chunk_broker.py
+index 8fa9d83..78b100c 100644
+--- a/packages/openpi-client/src/openpi_client/action_chunk_broker.py
++++ b/packages/openpi-client/src/openpi_client/action_chunk_broker.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ from typing import Dict
+ 
+ import numpy as np
+diff --git a/packages/openpi-client/src/openpi_client/runtime/runtime.py b/packages/openpi-client/src/openpi_client/runtime/runtime.py
+index 9552be0..6cbf477 100644
+--- a/packages/openpi-client/src/openpi_client/runtime/runtime.py
++++ b/packages/openpi-client/src/openpi_client/runtime/runtime.py
+@@ -1,3 +1,5 @@
++from __future__ import annotations
++
+ import logging
+ import threading
+ import time
+diff --git a/scripts/compute_norm_stats.py b/scripts/compute_norm_stats.py
+index c8aef87..5d79418 100644
+--- a/scripts/compute_norm_stats.py
++++ b/scripts/compute_norm_stats.py
+@@ -108,7 +108,9 @@ def main(config_name: str, max_frames: int | None = None):
+ 
+     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
+ 
+-    output_path = config.assets_dirs / data_config.repo_id
++    # Use the configured asset id. This is normally the repo id, but custom
++    # datasets may intentionally use a stable, distinct asset directory.
++    output_path = config.assets_dirs / data_config.asset_id
+     print(f"Writing stats to: {output_path}")
+     normalize.save(output_path, norm_stats)
+ 
+diff --git a/scripts/serve_policy.py b/scripts/serve_policy.py
+index 30f121a..d8a83c7 100644
+--- a/scripts/serve_policy.py
++++ b/scripts/serve_policy.py
+@@ -5,8 +5,8 @@ import socket
+ 
+ import tyro
+ 
+-from openpi.policies import policy as _policy
+ from openpi.policies import policy_config as _policy_config
++from openpi.policies import policy as _policy
+ from openpi.serving import websocket_policy_server
+ from openpi.training import config as _config
+ 
+@@ -50,6 +50,13 @@ class Args:
+     port: int = 8000
+     # Record the policy's behavior for debugging.
+     record: bool = False
++    # Return the native-JAX prefix from the same forward pass as the action.
++    # Stage 2 uses this to build z_rl without a converted PyTorch VLA.
++    return_rlt_prefix: bool = False
++    rlt_prefix_seq_len: int = 768
++    # Stage-1 RL-token checkpoint. Lets the robot-side EnvWorker request z_rl for
++    # intermediate control steps (RLT stride subsampling) from this process.
++    rlt_token_checkpoint: str | None = None
+ 
+     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
+     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
+@@ -76,11 +83,23 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
+ }
+ 
+ 
+-def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
++def create_default_policy(
++    env: EnvMode,
++    *,
++    default_prompt: str | None = None,
++    return_rlt_prefix: bool = False,
++    rlt_prefix_seq_len: int = 768,
++    rlt_token_checkpoint: str | None = None,
++) -> _policy.Policy:
+     """Create a default policy for the given environment."""
+     if checkpoint := DEFAULT_CHECKPOINT.get(env):
+         return _policy_config.create_trained_policy(
+-            _config.get_config(checkpoint.config), checkpoint.dir, default_prompt=default_prompt
++            _config.get_config(checkpoint.config),
++            checkpoint.dir,
++            default_prompt=default_prompt,
++            return_rlt_prefix=return_rlt_prefix,
++            rlt_prefix_seq_len=rlt_prefix_seq_len,
++            rlt_token_checkpoint=rlt_token_checkpoint,
+         )
+     raise ValueError(f"Unsupported environment mode: {env}")
+ 
+@@ -90,10 +109,21 @@ def create_policy(args: Args) -> _policy.Policy:
+     match args.policy:
+         case Checkpoint():
+             return _policy_config.create_trained_policy(
+-                _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
++                _config.get_config(args.policy.config),
++                args.policy.dir,
++                default_prompt=args.default_prompt,
++                return_rlt_prefix=args.return_rlt_prefix,
++                rlt_prefix_seq_len=args.rlt_prefix_seq_len,
++                rlt_token_checkpoint=args.rlt_token_checkpoint,
+             )
+         case Default():
+-            return create_default_policy(args.env, default_prompt=args.default_prompt)
++            return create_default_policy(
++                args.env,
++                default_prompt=args.default_prompt,
++                return_rlt_prefix=args.return_rlt_prefix,
++                rlt_prefix_seq_len=args.rlt_prefix_seq_len,
++                rlt_token_checkpoint=args.rlt_token_checkpoint,
++            )
+ 
+ 
+ def main(args: Args) -> None:
+diff --git a/src/openpi/models/pi0.py b/src/openpi/models/pi0.py
+index ae7c459..35210c9 100644
+--- a/src/openpi/models/pi0.py
++++ b/src/openpi/models/pi0.py
+@@ -67,6 +67,7 @@ class Pi0(_model.BaseModel):
+     def __init__(self, config: pi0_config.Pi0Config, rngs: nnx.Rngs):
+         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
+         self.pi05 = config.pi05
++        self.image_keys = tuple(config.image_keys)
+         paligemma_config = _gemma.get_config(config.paligemma_variant)
+         action_expert_config = _gemma.get_config(config.action_expert_variant)
+         # TODO: rewrite gemma in NNX. For now, use bridge.
+@@ -190,7 +191,9 @@ class Pi0(_model.BaseModel):
+         self, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions, *, train: bool = False
+     ) -> at.Float[at.Array, "*b ah"]:
+         preprocess_rng, noise_rng, time_rng = jax.random.split(rng, 3)
+-        observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
++        observation = _model.preprocess_observation(
++            preprocess_rng, observation, train=train, image_keys=self.image_keys
++        )
+ 
+         batch_shape = actions.shape[:-2]
+         noise = jax.random.normal(noise_rng, actions.shape)
+@@ -214,6 +217,28 @@ class Pi0(_model.BaseModel):
+         return jnp.mean(jnp.square(v_t - u_t), axis=-1)
+ 
+     @override
++    def _prefix_forward(self, observation: _model.Observation):
++        """The single vision/language prefix forward in this model.
++
++        Action sampling, Stage-2 z_rl serving and Stage-1 RL-token training all
++        go through here, so the token is trained on exactly what Stage 2 serves.
++        """
++        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
++        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
++        positions = jnp.cumsum(prefix_mask, axis=1) - 1
++        (prefix_output, _), kv_cache = self.PaliGemma.llm(
++            [prefix_tokens, None],
++            mask=prefix_attn_mask,
++            positions=positions,
++        )
++        return prefix_tokens, prefix_mask, prefix_output, kv_cache
++
++    def extract_rlt_prefix(self, observation: _model.Observation) -> tuple[at.Array, at.Array]:
++        """Return prefix embeddings and mask without running the action expert."""
++        observation = _model.preprocess_observation(None, observation, train=False, image_keys=self.image_keys)
++        _, prefix_mask, prefix_output, _ = self._prefix_forward(observation)
++        return prefix_output, prefix_mask
++
+     def sample_actions(
+         self,
+         rng: at.KeyArrayLike,
+@@ -222,7 +247,30 @@ class Pi0(_model.BaseModel):
+         num_steps: int | at.Int[at.Array, ""] = 10,
+         noise: at.Float[at.Array, "b ah ad"] | None = None,
+     ) -> _model.Actions:
+-        observation = _model.preprocess_observation(None, observation, train=False)
++        actions, _, _ = self.sample_actions_with_prefix(
++            rng,
++            observation,
++            num_steps=num_steps,
++            noise=noise,
++        )
++        return actions
++
++    def sample_actions_with_prefix(
++        self,
++        rng: at.KeyArrayLike,
++        observation: _model.Observation,
++        *,
++        num_steps: int | at.Int[at.Array, ""] = 10,
++        noise: at.Float[at.Array, "b ah ad"] | None = None,
++    ) -> tuple[_model.Actions, at.Array, at.Array]:
++        """Sample actions and expose the exact native-JAX prefix used by them.
++
++        The prefix forward below is also the forward that fills the denoising
++        KV cache. Returning it avoids a second vision/language pass and
++        guarantees that the Stage-2 reference action and RLT feature describe
++        the same transformed observation.
++        """
++        observation = _model.preprocess_observation(None, observation, train=False, image_keys=self.image_keys)
+         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
+         # distribution. yes, this is the opposite of the pi0 paper, and I'm sorry.
+         dt = -1.0 / num_steps
+@@ -231,10 +279,7 @@ class Pi0(_model.BaseModel):
+             noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
+ 
+         # first fill KV cache with a forward pass of the prefix
+-        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+-        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+-        positions = jnp.cumsum(prefix_mask, axis=1) - 1
+-        _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
++        prefix_tokens, prefix_mask, prefix_output, kv_cache = self._prefix_forward(observation)
+ 
+         def step(carry):
+             x_t, time = carry
+@@ -276,4 +321,4 @@ class Pi0(_model.BaseModel):
+             return time >= -dt / 2
+ 
+         x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
+-        return x_0
++        return x_0, prefix_output, prefix_mask
+diff --git a/src/openpi/models/pi0_config.py b/src/openpi/models/pi0_config.py
+index 584d83f..9dc8f64 100644
+--- a/src/openpi/models/pi0_config.py
++++ b/src/openpi/models/pi0_config.py
+@@ -34,6 +34,11 @@ class Pi0Config(_model.BaseModelConfig):
+ 
+     pytorch_compile_mode: str | None = "max-autotune"
+ 
++    # Image keys the model consumes, in prefix order. The default is the original three cameras, so every
++    # existing config and checkpoint behaves exactly as before. Extra views reuse the same SigLIP encoder and add
++    # no parameters; keys containing "wrist" get wrist-style (color-only) augmentation.
++    image_keys: tuple[str, ...] = _model.IMAGE_KEYS
++
+     def __post_init__(self):
+         if self.max_token_len is None:
+             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
+@@ -67,16 +72,8 @@ class Pi0Config(_model.BaseModelConfig):
+ 
+         with at.disable_typechecking():
+             observation_spec = _model.Observation(
+-                images={
+-                    "base_0_rgb": image_spec,
+-                    "left_wrist_0_rgb": image_spec,
+-                    "right_wrist_0_rgb": image_spec,
+-                },
+-                image_masks={
+-                    "base_0_rgb": image_mask_spec,
+-                    "left_wrist_0_rgb": image_mask_spec,
+-                    "right_wrist_0_rgb": image_mask_spec,
+-                },
++                images={key: image_spec for key in self.image_keys},
++                image_masks={key: image_mask_spec for key in self.image_keys},
+                 state=jax.ShapeDtypeStruct([batch_size, self.action_dim], jnp.float32),
+                 tokenized_prompt=jax.ShapeDtypeStruct([batch_size, self.max_token_len], jnp.int32),
+                 tokenized_prompt_mask=jax.ShapeDtypeStruct([batch_size, self.max_token_len], bool),
+diff --git a/src/openpi/policies/policy.py b/src/openpi/policies/policy.py
+index b9b708b..3ccc6e8 100644
+--- a/src/openpi/policies/policy.py
++++ b/src/openpi/policies/policy.py
+@@ -1,5 +1,7 @@
+ from collections.abc import Sequence
++import importlib.util
+ import logging
++import os
+ import pathlib
+ import time
+ from typing import Any, TypeAlias
+@@ -21,6 +23,24 @@ from openpi.shared import nnx_utils
+ BasePolicy: TypeAlias = _base_policy.BasePolicy
+ 
+ 
++def _rlt_token_checkpoint_module():
++    """Load RLinf's Stage-1 checkpoint helpers without importing the RLinf package.
++
++    Importing ``rlinf.models`` pulls in Ray, which this serving environment does
++    not have; the helper module is written to be loadable by path.
++    """
++    rlinf_dir = pathlib.Path(
++        os.environ.get("RLINF_DIR", pathlib.Path(__file__).resolve().parents[3] / "RLinf")
++    )
++    path = rlinf_dir / "rlinf" / "models" / "embodiment" / "modules" / "rlt_token_checkpoint.py"
++    if not path.is_file():
++        raise FileNotFoundError(f"RLT token checkpoint helpers not found at {path}; set RLINF_DIR.")
++    spec = importlib.util.spec_from_file_location("rlt_token_checkpoint", path)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
+ class Policy(BasePolicy):
+     def __init__(
+         self,
+@@ -33,6 +53,9 @@ class Policy(BasePolicy):
+         metadata: dict[str, Any] | None = None,
+         pytorch_device: str = "cpu",
+         is_pytorch: bool = False,
++        return_rlt_prefix: bool = False,
++        rlt_prefix_seq_len: int = 768,
++        rlt_token_checkpoint: str | None = None,
+     ):
+         """Initialize the Policy.
+ 
+@@ -46,26 +69,62 @@ class Policy(BasePolicy):
+             pytorch_device: Device to use for PyTorch models (e.g., "cpu", "cuda:0").
+                           Only relevant when is_pytorch=True.
+             is_pytorch: Whether the model is a PyTorch model. If False, assumes JAX model.
++            rlt_token_checkpoint: Stage-1 RL-token checkpoint. Enables prefix-only
++                requests that return z_rl for RLT stride subsampling.
+         """
+         self._model = model
+         self._input_transform = _transforms.compose(transforms)
+         self._output_transform = _transforms.compose(output_transforms)
+         self._sample_kwargs = sample_kwargs or {}
+-        self._metadata = metadata or {}
++        self._metadata = dict(metadata or {})
+         self._is_pytorch_model = is_pytorch
+         self._pytorch_device = pytorch_device
++        self._return_rlt_prefix = bool(return_rlt_prefix)
++        self._rlt_prefix_seq_len = int(rlt_prefix_seq_len)
++        if self._return_rlt_prefix:
++            self._metadata["rlt_native_jax_prefix"] = True
++            self._metadata["rlt_prefix_seq_len"] = self._rlt_prefix_seq_len
+ 
+         if self._is_pytorch_model:
++            if self._return_rlt_prefix:
++                raise ValueError(
++                    "return_rlt_prefix requires the native JAX policy path."
++                )
+             self._model = self._model.to(pytorch_device)
+             self._model.eval()
+             self._sample_actions = model.sample_actions
+         else:
+             # JAX model setup
+-            self._sample_actions = nnx_utils.module_jit(model.sample_actions)
++            sample_method = (
++                model.sample_actions_with_prefix
++                if self._return_rlt_prefix
++                else model.sample_actions
++            )
++            self._sample_actions = nnx_utils.module_jit(sample_method)
++            if self._return_rlt_prefix:
++                self._extract_rlt_prefix = nnx_utils.module_jit(model.extract_rlt_prefix)
+             self._rng = rng or jax.random.key(0)
+ 
++        self._rlt_encoder = None
++        self._rlt_encoder_device = None
++        if rlt_token_checkpoint is not None:
++            if not self._return_rlt_prefix:
++                raise ValueError("rlt_token_checkpoint requires return_rlt_prefix=True.")
++            encoder, fingerprint = _rlt_token_checkpoint_module().load_stage1_rlt_encoder(
++                rlt_token_checkpoint, prefix_seq_len=self._rlt_prefix_seq_len
++            )
++            self._rlt_encoder_device = (
++                torch.device("cuda", 0) if torch.cuda.is_available() else torch.device("cpu")
++            )
++            self._rlt_encoder = encoder.to(device=self._rlt_encoder_device, dtype=torch.bfloat16)
++            self._metadata["rlt_prefix_only"] = True
++            self._metadata["rlt_encoder_fingerprint"] = fingerprint
++            logging.info("Serving RLT z_rl for prefix-only requests (encoder %s)", fingerprint)
++
+     @override
+     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
++        if "rlt_prefix_batch" in obs:
++            return self._infer_rlt_prefix_batch(obs["rlt_prefix_batch"])
+         # Make a copy since transformations may modify the inputs in place.
+         inputs = jax.tree.map(lambda x: x, obs)
+         inputs = self._input_transform(inputs)
+@@ -89,9 +148,22 @@ class Policy(BasePolicy):
+ 
+         observation = _model.Observation.from_dict(inputs)
+         start_time = time.monotonic()
++        sample_result = self._sample_actions(
++            sample_rng_or_pytorch_device, observation, **sample_kwargs
++        )
++        if self._return_rlt_prefix:
++            actions, prefix_output, prefix_mask = sample_result
++            if prefix_output.shape[1] < self._rlt_prefix_seq_len:
++                raise ValueError(
++                    "Native JAX prefix is shorter than the configured RLT "
++                    f"image prefix: {prefix_output.shape[1]} < "
++                    f"{self._rlt_prefix_seq_len}"
++                )
++        else:
++            actions = sample_result
+         outputs = {
+             "state": inputs["state"],
+-            "actions": self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs),
++            "actions": actions,
+         }
+         model_time = time.monotonic() - start_time
+         if self._is_pytorch_model:
+@@ -100,11 +172,58 @@ class Policy(BasePolicy):
+             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)
+ 
+         outputs = self._output_transform(outputs)
++        if self._return_rlt_prefix:
++            # NumPy/msgpack has no portable bfloat16 representation. float16
++            # keeps the three-camera prefix payload at about 3 MiB while the
++            # Stage-1 encoder converts it back to bfloat16 on the GPU node.
++            outputs["rlt_prefix"] = np.asarray(
++                prefix_output[0, : self._rlt_prefix_seq_len], dtype=np.float16
++            )
++            outputs["rlt_prefix_mask"] = np.asarray(
++                prefix_mask[0, : self._rlt_prefix_seq_len], dtype=np.bool_
++            )
+         outputs["policy_timing"] = {
+             "infer_ms": model_time * 1000,
+         }
+         return outputs
+ 
++    def _infer_rlt_prefix_batch(self, requests: Sequence[dict]) -> dict:
++        """Encode several observations to z_rl without sampling actions.
++
++        RLT stride subsampling needs z_rl every few control steps. Only the
++        2048-D token leaves this process, so these requests never carry the
++        3 MiB prefix across the network the way the action request does.
++        """
++        if self._rlt_encoder is None:
++            raise ValueError(
++                "rlt_prefix_batch requires the policy to be served with --rlt-token-checkpoint."
++            )
++        if not requests:
++            raise ValueError("rlt_prefix_batch must contain at least one observation.")
++        items = [self._input_transform(jax.tree.map(lambda x: x, request)) for request in requests]
++        inputs = jax.tree.map(lambda *values: jnp.stack([jnp.asarray(value) for value in values]), *items)
++        observation = _model.Observation.from_dict(inputs)
++
++        start_time = time.monotonic()
++        prefix_output, prefix_mask = self._extract_rlt_prefix(observation)
++        if prefix_output.shape[1] < self._rlt_prefix_seq_len:
++            raise ValueError(
++                "Native JAX prefix is shorter than the configured RLT image prefix: "
++                f"{prefix_output.shape[1]} < {self._rlt_prefix_seq_len}"
++            )
++        prefix = torch.utils.dlpack.from_dlpack(prefix_output[:, : self._rlt_prefix_seq_len])
++        mask = torch.utils.dlpack.from_dlpack(prefix_mask[:, : self._rlt_prefix_seq_len])
++        with torch.no_grad():
++            z_rl = self._rlt_encoder(
++                prefix.to(device=self._rlt_encoder_device, dtype=torch.bfloat16),
++                mask.to(device=self._rlt_encoder_device, dtype=torch.bool),
++            )
++        return {
++            "rlt_z_rl": z_rl.reshape(len(requests), -1).float().cpu().numpy(),
++            "rlt_prefix_valid": mask.to(dtype=torch.bool).all(dim=1).cpu().numpy(),
++            "policy_timing": {"infer_ms": (time.monotonic() - start_time) * 1000},
++        }
++
+     @property
+     def metadata(self) -> dict[str, Any]:
+         return self._metadata
+diff --git a/src/openpi/policies/policy_config.py b/src/openpi/policies/policy_config.py
+index 6570df0..b101f09 100644
+--- a/src/openpi/policies/policy_config.py
++++ b/src/openpi/policies/policy_config.py
+@@ -6,11 +6,11 @@ from typing import Any
+ import jax.numpy as jnp
+ 
+ import openpi.models.model as _model
+-import openpi.policies.policy as _policy
+ import openpi.shared.download as download
+ from openpi.training import checkpoints as _checkpoints
+ from openpi.training import config as _config
+ import openpi.transforms as transforms
++import openpi.policies.policy as _policy
+ 
+ 
+ def create_trained_policy(
+@@ -22,6 +22,9 @@ def create_trained_policy(
+     default_prompt: str | None = None,
+     norm_stats: dict[str, transforms.NormStats] | None = None,
+     pytorch_device: str | None = None,
++    return_rlt_prefix: bool = False,
++    rlt_prefix_seq_len: int = 768,
++    rlt_token_checkpoint: str | None = None,
+ ) -> _policy.Policy:
+     """Create a policy from a trained checkpoint.
+ 
+@@ -91,4 +94,7 @@ def create_trained_policy(
+         metadata=train_config.policy_metadata,
+         is_pytorch=is_pytorch,
+         pytorch_device=pytorch_device if is_pytorch else None,
++        return_rlt_prefix=return_rlt_prefix,
++        rlt_prefix_seq_len=rlt_prefix_seq_len,
++        rlt_token_checkpoint=rlt_token_checkpoint,
+     )
+diff --git a/src/openpi/training/checkpoints.py b/src/openpi/training/checkpoints.py
+index f32a831..e9b924d 100644
+--- a/src/openpi/training/checkpoints.py
++++ b/src/openpi/training/checkpoints.py
+@@ -4,12 +4,16 @@ import asyncio
+ import concurrent.futures as futures
+ import dataclasses
+ import logging
++import pathlib
++import shutil
+ from typing import Protocol
+ 
+ from etils import epath
++from etils.epath import gpath
+ import jax
+ import orbax.checkpoint as ocp
+ import orbax.checkpoint.future as future
++from orbax.checkpoint._src.path import async_utils as orbax_path_async_utils
+ 
+ from openpi.shared import array_typing as at
+ import openpi.shared.normalize as _normalize
+@@ -17,14 +21,52 @@ import openpi.training.data_loader as _data_loader
+ import openpi.training.utils as training_utils
+ 
+ 
++def _resolve_checkpoint_dir(checkpoint_dir: epath.Path | pathlib.Path | str) -> pathlib.Path:
++    """Resolve checkpoint directories as local pathlib paths.
++
++    Orbax's save path currently passes a `mode=` argument into `mkdir`. That works for
++    `pathlib.Path`, but fails for `etils.epath.GPath` on local filesystems with:
++    `NotImplementedError: mkdir with custom mode= not supported`.
++    """
++    checkpoint_dir = str(checkpoint_dir)
++    if "://" in checkpoint_dir and not checkpoint_dir.startswith("file://"):
++        raise ValueError(
++            "Remote checkpoint directories are not supported for training in this project. "
++            f"Use a local path instead of: {checkpoint_dir}"
++        )
++    if checkpoint_dir.startswith("file://"):
++        checkpoint_dir = checkpoint_dir[len("file://") :]
++    return pathlib.Path(checkpoint_dir).expanduser().resolve()
++
++
++_ORIGINAL_ORBAX_ASYNC_MAKEDIRS = orbax_path_async_utils.async_makedirs
++
++
++def _patched_async_makedirs(
++    path: epath.Path,
++    *args,
++    parents: bool = False,
++    exist_ok: bool = True,
++    **kwargs,
++):
++    # `etils.epath.PosixGPath.mkdir` raises on custom mode values, while Orbax
++    # unconditionally forwards `mode=` when creating tmp checkpoint dirs.
++    if isinstance(path, gpath.PosixGPath):
++        kwargs.pop("mode", None)
++    return _ORIGINAL_ORBAX_ASYNC_MAKEDIRS(path, *args, parents=parents, exist_ok=exist_ok, **kwargs)
++
++
++orbax_path_async_utils.async_makedirs = _patched_async_makedirs
++
++
+ def initialize_checkpoint_dir(
+-    checkpoint_dir: epath.Path | str, *, keep_period: int | None, overwrite: bool, resume: bool
++    checkpoint_dir: epath.Path | pathlib.Path | str, *, keep_period: int | None, overwrite: bool, resume: bool
+ ) -> tuple[ocp.CheckpointManager, bool]:
+-    checkpoint_dir = epath.Path(checkpoint_dir).resolve()
++    checkpoint_dir = _resolve_checkpoint_dir(checkpoint_dir)
+     resuming = False
+     if checkpoint_dir.exists():
+         if overwrite:
+-            checkpoint_dir.rmtree()
++            shutil.rmtree(checkpoint_dir)
+             checkpoint_dir.mkdir(parents=True, exist_ok=True)
+             logging.info(f"Wiped checkpoint directory {checkpoint_dir}")
+         elif resume:
+@@ -44,11 +86,21 @@ def initialize_checkpoint_dir(
+             "train_state": ocp.PyTreeCheckpointHandler(),
+             "params": ocp.PyTreeCheckpointHandler(),
+         },
++        # options=ocp.CheckpointManagerOptions(
++        #     max_to_keep=1,
++        #     keep_period=keep_period,
++        #     create=False,
++        #     async_options=ocp.AsyncOptions(timeout_secs=7200),
++        # ),
+         options=ocp.CheckpointManagerOptions(
+             max_to_keep=1,
+             keep_period=keep_period,
+             create=False,
+-            async_options=ocp.AsyncOptions(timeout_secs=7200),
++            enable_async_checkpointing=False,
++            async_options=ocp.AsyncOptions(
++                timeout_secs=7200,
++                create_directories_asynchronously=False,
++            ),
+         ),
+     )
+ 
+diff --git a/src/openpi/training/data_loader.py b/src/openpi/training/data_loader.py
+index e2ee7dd..6c5959c 100644
+--- a/src/openpi/training/data_loader.py
++++ b/src/openpi/training/data_loader.py
+@@ -1,7 +1,9 @@
+ from collections.abc import Iterator, Sequence
++import importlib.util
+ import logging
+ import multiprocessing
+ import os
++import pathlib
+ import typing
+ from typing import Literal, Protocol, SupportsIndex, TypeVar
+ 
+@@ -127,6 +129,25 @@ class FakeDataset(Dataset):
+         return self._num_samples
+ 
+ 
++def _get_safe_lerobot_video_backend(preferred_backend: str | None) -> str:
++    """Pick a video backend that is usable in the current environment."""
++    if preferred_backend is not None:
++        return preferred_backend
++
++    if importlib.util.find_spec("torchcodec") is not None:
++        try:
++            from torchcodec.decoders import VideoDecoder  # noqa: F401
++
++            return "torchcodec"
++        except Exception as exc:
++            logging.warning(
++                "Failed to initialize 'torchcodec' (%s); falling back to 'pyav' for video decoding.",
++                exc,
++            )
++
++    return "pyav"
++
++
+ def create_torch_dataset(
+     data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
+ ) -> Dataset:
+@@ -137,12 +158,21 @@ def create_torch_dataset(
+     if repo_id == "fake":
+         return FakeDataset(model_config, num_samples=1024)
+ 
+-    dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
++    dataset_root = None
++    repo_path = pathlib.Path(repo_id).expanduser()
++    if repo_path.is_dir():
++        repo_path = repo_path.resolve()
++        dataset_root = str(repo_path)
++        repo_id = repo_path.name
++
++    dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id, root=dataset_root)
+     dataset = lerobot_dataset.LeRobotDataset(
+-        data_config.repo_id,
++        repo_id,
++        root=dataset_root,
+         delta_timestamps={
+             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
+         },
++        video_backend=_get_safe_lerobot_video_backend(data_config.video_backend),
+     )
+ 
+     if data_config.prompt_from_task:
